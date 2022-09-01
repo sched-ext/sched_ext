@@ -11670,14 +11670,14 @@ static void task_set_group_fair(struct task_struct *p)
 {
 	struct sched_entity *se = &p->se;
 
-	set_task_rq(p, task_cpu(p));
+	set_task_rq(p, task_cpu(p), TASK_SET_GROUP);
 	se->depth = se->parent ? se->parent->depth + 1 : 0;
 }
 
-static void task_move_group_fair(struct task_struct *p)
+static void task_move_group_fair(struct task_struct *p, int type)
 {
 	detach_task_cfs_rq(p);
-	set_task_rq(p, task_cpu(p));
+	set_task_rq(p, task_cpu(p), type);
 
 #ifdef CONFIG_SMP
 	/* Tell se's cfs_rq has been changed -- migrated */
@@ -11693,8 +11693,9 @@ static void task_change_group_fair(struct task_struct *p, int type)
 		task_set_group_fair(p);
 		break;
 
-	case TASK_MOVE_GROUP:
-		task_move_group_fair(p);
+	case TASK_MOVE_AUTOGROUP:
+	case TASK_MOVE_CGROUP:
+		task_move_group_fair(p, type);
 		break;
 	}
 }

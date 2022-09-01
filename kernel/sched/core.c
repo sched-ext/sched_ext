@@ -10188,7 +10188,7 @@ static void sched_change_group(struct task_struct *tsk, int type)
 		tsk->sched_class->task_change_group(tsk, type);
 	else
 #endif
-		set_task_rq(tsk, task_cpu(tsk));
+		set_task_rq(tsk, task_cpu(tsk), type);
 }
 
 /*
@@ -10198,7 +10198,7 @@ static void sched_change_group(struct task_struct *tsk, int type)
  * now. This function just updates tsk->se.cfs_rq and tsk->se.parent to reflect
  * its new group.
  */
-void sched_move_task(struct task_struct *tsk)
+void sched_move_task(struct task_struct *tsk, bool autogroup)
 {
 	int queued, running, queue_flags =
 		DEQUEUE_SAVE | DEQUEUE_MOVE | DEQUEUE_NOCLOCK;
@@ -10216,7 +10216,8 @@ void sched_move_task(struct task_struct *tsk)
 	if (running)
 		put_prev_task(rq, tsk);
 
-	sched_change_group(tsk, TASK_MOVE_GROUP);
+	sched_change_group(tsk, autogroup ?
+			   TASK_MOVE_AUTOGROUP : TASK_MOVE_CGROUP);
 
 	if (queued)
 		enqueue_task(rq, tsk, queue_flags);
@@ -10348,7 +10349,7 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 	struct cgroup_subsys_state *css;
 
 	cgroup_taskset_for_each(task, css, tset)
-		sched_move_task(task);
+		sched_move_task(task, false);
 }
 
 #ifdef CONFIG_UCLAMP_TASK_GROUP
