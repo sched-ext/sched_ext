@@ -181,6 +181,10 @@ Where to Look
   * ``scx_example_qmap[.bpf].c``: A multi-level FIFO scheduler supporting
     five levels of priority implemented with ``BPF_MAP_TYPE_QUEUE``.
 
+  * ``rhone*``: A userspace scheduling framework based on BPF ringbuffer.
+    The current only excample is a global FIFO scheduler but the framework
+    will soon be expanded with more examples.
+
 ext_lib
 =======
 
