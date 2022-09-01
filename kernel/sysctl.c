@@ -81,6 +81,9 @@
 #ifdef CONFIG_RT_MUTEXES
 #include <linux/rtmutex.h>
 #endif
+#ifdef CONFIG_SCHED_CLASS_EXT
+#include <linux/sched/ext.h>
+#endif
 
 #if defined(CONFIG_SYSCTL)
 
@@ -1642,6 +1645,29 @@ static struct ctl_table kern_table[] = {
 		.extra2		= SYSCTL_FOUR,
 	},
 #endif /* CONFIG_NUMA_BALANCING */
+#ifdef CONFIG_SCHED_CLASS_EXT
+	{
+		.procname	= "sched_available_normal_classes",
+		.data		= (void *)SCHED_AVAILABLE_NORMAL_CLASSES,
+		.maxlen		= sizeof(SCHED_AVAILABLE_NORMAL_CLASSES),
+		.mode		= 0444,
+		.proc_handler	= proc_dostring,
+	},
+	{
+		.procname	= "sched_normal_class",
+		.data		= NULL,
+		.maxlen		= SCHED_NORMAL_CLASS_NAME_LEN,
+		.mode		= 0644,
+		.proc_handler	= sched_normal_class_handler,
+	},
+	{
+		.procname	= "sched_ext_ops",
+		.data		= NULL,
+		.maxlen		= SCX_OPS_NAME_LEN,
+		.mode		= 0444,
+		.proc_handler	= sched_ext_ops_handler,
+	},
+#endif /* CONFIG_SCHED_CLASS_EXT */
 	{
 		.procname	= "panic",
 		.data		= &panic_timeout,
