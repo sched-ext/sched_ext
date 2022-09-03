@@ -140,3 +140,7 @@ config SCHED_CLASS_EXT
 config SCHED_CLASS_EXT_DEFAULT
 	bool "Default to Extensible Scheduling Class"
 	depends on SCHED_CLASS_EXT
+
+config SCHED_CLASS_EXT_LIB
+	bool "Lego blocks to build an ext scheduler with BPF"
+	depends on SCHED_CLASS_EXT && EXT_GROUP_SCHED
