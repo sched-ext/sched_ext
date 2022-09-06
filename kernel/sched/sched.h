@@ -496,7 +496,7 @@ extern void sched_online_group(struct task_group *tg,
 extern void sched_destroy_group(struct task_group *tg);
 extern void sched_release_group(struct task_group *tg);
 
-extern void sched_move_task(struct task_struct *tsk);
+extern void sched_move_task(struct task_struct *tsk, bool autogroup);
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 extern int sched_group_set_shares(struct task_group *tg, unsigned long shares);
@@ -1911,6 +1911,13 @@ static inline void sched_core_tick(struct rq *rq) {}
 
 #endif /* CONFIG_SCHED_CORE && CONFIG_SCHEDSTATS */
 
+enum set_task_rq_type {
+	TASK_SET_CPU,
+	TASK_SET_GROUP,
+	TASK_MOVE_AUTOGROUP,
+	TASK_MOVE_CGROUP,
+};
+
 #ifdef CONFIG_CGROUP_SCHED
 
 /*
@@ -1932,7 +1939,7 @@ static inline struct task_group *task_group(struct task_struct *p)
 }
 
 /* Change a task's cfs_rq and parent entity if it moves across CPUs/groups */
-static inline void set_task_rq(struct task_struct *p, unsigned int cpu)
+static inline void set_task_rq(struct task_struct *p, unsigned int cpu, int type)
 {
 #if defined(CONFIG_FAIR_GROUP_SCHED) || defined(CONFIG_RT_GROUP_SCHED)
 	struct task_group *tg = task_group(p);
@@ -1952,7 +1959,7 @@ static inline void set_task_rq(struct task_struct *p, unsigned int cpu)
 
 #else /* CONFIG_CGROUP_SCHED */
 
-static inline void set_task_rq(struct task_struct *p, unsigned int cpu) { }
+static inline void set_task_rq(struct task_struct *p, unsigned int cpu, int type) { }
 static inline struct task_group *task_group(struct task_struct *p)
 {
 	return NULL;
@@ -1962,7 +1969,7 @@ static inline struct task_group *task_group(struct task_struct *p)
 
 static inline void __set_task_cpu(struct task_struct *p, unsigned int cpu)
 {
-	set_task_rq(p, cpu);
+	set_task_rq(p, cpu, TASK_SET_CPU);
 #ifdef CONFIG_SMP
 	/*
 	 * After ->cpu is set up to a new value, task_rq_lock(p, ...) can be
@@ -2203,9 +2210,6 @@ struct sched_class {
 					struct task_struct *task);
 
 	void (*update_curr)(struct rq *rq);
-
-#define TASK_SET_GROUP		0
-#define TASK_MOVE_GROUP		1
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	void (*task_change_group)(struct task_struct *p, int type);
