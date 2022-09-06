@@ -1,6 +1,7 @@
 scx_example_dummy
 scx_example_qmap
 scxl_example_flat
+scxu_example_fifo
 *.skel.h
 *.subskel.h
 /tools/
