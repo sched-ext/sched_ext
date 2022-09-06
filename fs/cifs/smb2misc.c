@@ -16,6 +16,7 @@
 #include "smb2status.h"
 #include "smb2glob.h"
 #include "nterr.h"
+#include "cached_dir.h"
 
 static int
 check_smb2_hdr(struct smb2_hdr *shdr, __u64 mid)
@@ -221,7 +222,7 @@ smb2_check_message(char *buf, unsigned int len, struct TCP_Server_Info *server)
 		}
 	}
 
-	calc_len = smb2_calc_size(buf, server);
+	calc_len = smb2_calc_size(buf);
 
 	/* For SMB2_IOCTL, OutputOffset and OutputLength are optional, so might
 	 * be 0, and not a real miscalculation */
@@ -409,7 +410,7 @@ smb2_get_data_area_len(int *off, int *len, struct smb2_hdr *shdr)
  * portion, the number of word parameters and the data portion of the message.
  */
 unsigned int
-smb2_calc_size(void *buf, struct TCP_Server_Info *srvr)
+smb2_calc_size(void *buf)
 {
 	struct smb2_pdu *pdu = buf;
 	struct smb2_hdr *shdr = &pdu->hdr;
@@ -648,15 +649,7 @@ smb2_is_valid_lease_break(char *buffer)
 				}
 				spin_unlock(&tcon->open_file_lock);
 
-				if (tcon->crfid.is_valid &&
-				    !memcmp(rsp->LeaseKey,
-					    tcon->crfid.fid->lease_key,
-					    SMB2_LEASE_KEY_SIZE)) {
-					tcon->crfid.time = 0;
-					INIT_WORK(&tcon->crfid.lease_break,
-						  smb2_cached_lease_break);
-					queue_work(cifsiod_wq,
-						   &tcon->crfid.lease_break);
+				if (cached_dir_lease_break(tcon, rsp->LeaseKey)) {
 					spin_unlock(&cifs_tcp_ses_lock);
 					return true;
 				}
