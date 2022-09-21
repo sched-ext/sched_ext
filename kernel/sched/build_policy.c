@@ -56,4 +56,7 @@
 
 #ifdef CONFIG_SCHED_CLASS_EXT
 # include "ext.c"
+# ifdef CONFIG_SCHED_CLASS_EXT_LIB
+#  include "ext_lib.c"
+# endif
 #endif

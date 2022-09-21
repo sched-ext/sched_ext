@@ -3254,5 +3254,6 @@ extern struct cftype cpu_cftypes[CPU_CFTYPE_CNT + 1];
 #endif /* CONFIG_CGROUP_SCHED */
 
 #include "ext.h"
+#include "ext_lib.h"
 
 #endif /* _KERNEL_SCHED_SCHED_H */
