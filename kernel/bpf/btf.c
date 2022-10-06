@@ -208,7 +208,10 @@ enum btf_kfunc_hook {
 };
 
 enum {
-	BTF_KFUNC_SET_MAX_CNT = 32,
+	/* XXX: Temporarily increase the maximum allowed # of kfunc sets, as
+	 * sched_ext exceeds this maximum.
+	 */
+	BTF_KFUNC_SET_MAX_CNT = 256,
 	BTF_DTOR_KFUNC_MAX_CNT = 256,
 };
 
