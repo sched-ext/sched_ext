@@ -538,6 +538,8 @@ enum scx_ent_flags {
 	SCX_TASK_CURSOR		= 1 << 31, /* iteration cursor, not a task */
 };
 
+struct extl_entity;
+
 struct sched_ext_entity {
 	struct scx_dispatch_q	*dq;
 	struct list_head	dq_node;
@@ -548,6 +550,9 @@ struct sched_ext_entity {
 	atomic64_t		ops_state;
 	u64			slice;
 	struct list_head	tasks_node;
+#ifdef CONFIG_SCHED_CLASS_EXT_LIB
+	struct extl_entity	*le;
+#endif
 };
 
 void sched_ext_free(struct task_struct *p);
