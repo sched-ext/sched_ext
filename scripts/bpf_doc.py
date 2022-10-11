@@ -681,6 +681,7 @@ class PrinterHelpers(Printer):
             'struct bpf_dynptr',
             'struct iphdr',
             'struct ipv6hdr',
+            'struct cgroup',
     ]
     known_types = {
             '...',
@@ -734,6 +735,7 @@ class PrinterHelpers(Printer):
             'struct bpf_dynptr',
             'struct iphdr',
             'struct ipv6hdr',
+            'struct cgroup',
     }
     mapped_types = {
             'u8': '__u8',

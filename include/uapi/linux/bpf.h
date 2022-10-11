@@ -4051,6 +4051,26 @@ union bpf_attr {
  * 	Return
  * 		The id is returned or 0 in case the id could not be retrieved.
  *
+ * u64 bpf_get_cgroup_id(struct cgroup *cgrp)
+ *	Description
+ *		Find out the ID of a cgroup.
+ *	Return
+ *		ID of *cgrp*.
+ *
+ * u64 bpf_get_cgroup_by_id(u64 cgid)
+ *	Description
+ *		Find the cgroup with ID *cgid*.
+ *	Return
+ *		Pointer to the cgroup if found, NULL otherwise.
+ *
+ * struct cgroup *bpf_get_ancestor_cgroup(struct cgroup *cgrp, int ancestor_level)
+ *	Description
+ *		Find the ancestor of *cgrp* at the level *ancestor_level*.
+ *		See bpf_get_current_ancestor_cgroup_id() for details on
+ *		*ancestor_level*.
+ *	Return
+ *		Pointer to the cgroup if found, NULL otherwise.
+ *
  * long bpf_sk_assign(struct sk_buff *skb, void *sk, u64 flags)
  *	Description
  *		Helper is overloaded depending on BPF program type. This
@@ -5561,6 +5581,9 @@ union bpf_attr {
 	FN(xdp_output),			\
 	FN(get_netns_cookie),		\
 	FN(get_current_ancestor_cgroup_id),	\
+	FN(get_cgroup_id),		\
+	FN(get_cgroup_by_id),		\
+	FN(get_ancestor_cgroup),	\
 	FN(sk_assign),			\
 	FN(ktime_get_boot_ns),		\
 	FN(seq_printf),			\

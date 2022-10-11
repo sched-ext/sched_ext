@@ -428,6 +428,63 @@ const struct bpf_func_proto bpf_get_current_ancestor_cgroup_id_proto = {
 	.ret_type	= RET_INTEGER,
 	.arg1_type	= ARG_ANYTHING,
 };
+
+BTF_ID_LIST_SINGLE(bpf_cgroup_btf_id, struct, cgroup)
+
+BPF_CALL_1(bpf_get_cgroup_id, struct cgroup *, cgrp)
+{
+	return cgroup_id(cgrp);
+}
+
+const struct bpf_func_proto bpf_get_cgroup_id_proto = {
+	.func		= bpf_get_cgroup_id,
+	.gpl_only	= false,
+	.ret_type	= RET_INTEGER,
+	.arg1_type	= ARG_PTR_TO_BTF_ID,
+	.arg1_btf_id	= &bpf_cgroup_btf_id[0],
+};
+
+BPF_CALL_1(bpf_get_cgroup_by_id, u64, cgid)
+{
+	struct cgroup *cgrp;
+
+	lockdep_assert(rcu_read_lock_any_held());
+
+	/*
+	 * There's no RCU protected cgroup lookup yet. Do a full get, put and
+	 * return. This is safe as cgroups are RCU protected. Ideally, we want
+	 * RCU protected cgroup lookup so that the spurious get/put can be
+	 * removed.
+	 */
+	cgrp = cgroup_get_from_id(cgid);
+	cgroup_put(cgrp);
+	return (unsigned long)cgrp;
+}
+
+const struct bpf_func_proto bpf_get_cgroup_by_id_proto = {
+	.func		= bpf_get_cgroup_by_id,
+	.gpl_only	= false,
+	.ret_type	= RET_PTR_TO_BTF_ID_OR_NULL,
+	.ret_btf_id	= &bpf_cgroup_btf_id[0],
+	.arg1_type	= ARG_ANYTHING,
+};
+
+BPF_CALL_2(bpf_get_ancestor_cgroup, struct cgroup *, cgrp, int, ancestor_level)
+{
+	/* as long as @cgrp is accessible, all ancestors are accessible */
+	return (unsigned long)cgroup_ancestor(cgrp, ancestor_level);
+}
+
+const struct bpf_func_proto bpf_get_ancestor_cgroup_proto = {
+	.func		= bpf_get_ancestor_cgroup,
+	.gpl_only	= false,
+	.ret_type	= RET_PTR_TO_BTF_ID_OR_NULL,
+	.ret_btf_id	= &bpf_cgroup_btf_id[0],
+	.arg1_type	= ARG_PTR_TO_BTF_ID,
+	.arg1_btf_id	= &bpf_cgroup_btf_id[0],
+	.arg2_type	= ARG_ANYTHING,
+};
+
 #endif /* CONFIG_CGROUPS */
 
 #define BPF_STRTOX_BASE_MASK 0x1F
@@ -1663,6 +1720,12 @@ bpf_base_func_proto(enum bpf_func_id func_id)
 		return &bpf_dynptr_write_proto;
 	case BPF_FUNC_dynptr_data:
 		return &bpf_dynptr_data_proto;
+	case BPF_FUNC_get_cgroup_id:
+		return &bpf_get_cgroup_id_proto;
+	case BPF_FUNC_get_cgroup_by_id:
+		return &bpf_get_cgroup_by_id_proto;
+	case BPF_FUNC_get_ancestor_cgroup:
+		return &bpf_get_ancestor_cgroup_proto;
 	default:
 		break;
 	}
