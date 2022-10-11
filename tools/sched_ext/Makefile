@@ -113,7 +113,7 @@ BPF_CFLAGS = -g -D__TARGET_ARCH_$(SRCARCH)					\
 	     -Wno-compare-distinct-pointer-types
 
 all: scx_example_dummy scx_example_qmap scx_example_central scx_example_pair	\
-     scxl_example_flat
+     rhone scxl_example_flat
 
 # sort removes libbpf duplicates when not cross-building
 MAKE_DIRS := $(sort $(BUILD_DIR)/libbpf $(HOST_BUILD_DIR)/libbpf		\
@@ -180,6 +180,34 @@ scx_example_pair: scx_example_pair.c scx_example_pair.skel.h
 	$(CC) $(CFLAGS) -c $< -o $@.o
 	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
 
+# TODO: Push all of these targets, along with the rhone source code, into a
+# separate rhone/ subdirectory.
+rhone_prog.bpf.o: rhone_bpf_internal.h
+
+rhone_sched.o: rhone_sched.c rhone.h rhone_bpf_internal.h rhone_prog.skel.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+rhone_domain.o: rhone_domain.c rhone_domain.h rhone.h rhone_bpf_internal.h	\
+		rhone_prog.skel.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+rhone_cpumask.o: rhone_cpumask.c rhone_cpumask.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+rhone_task.o: rhone_task.c rhone_task.h rhone_bpf_internal.h
+	$(CC) $(CFLAGS) -c $< -o $@
+
+rhone.a: rhone_task.o rhone_sched.o rhone_cpumask.o rhone_domain.o		\
+	 rhone.h rhone_cpumask.h
+	$(AR) rcs $@ rhone_sched.o rhone_cpumask.o rhone_task.o			\
+		rhone_domain.o $(HOST_BPFOBJ)
+
+scxu_example_fifo: scxu_example_fifo.c rhone.a
+	$(CC) $(CFLAGS) -c $< -o $@.o
+	$(CC) $(CFLAGS) -o $@ $@.o rhone.a $(LDFLAGS) $(HOST_BPFOBJ)
+
+rhone: rhone.a scxu_example_fifo
+
 scxl_example_flat.bpf.o: scxl_example_flat.h scx_ravg.h
 
 scxl_example_flat: scxl_example_flat.c scxl_example_flat.skel.h
@@ -190,6 +218,6 @@ clean:
 	rm -rf $(SCRATCH_DIR) $(HOST_SCRATCH_DIR)
 	rm -f *.o *.skel.h *.subskel.h
 	rm -f scx_example_dummy scx_example_qmap scx_example_central		\
-	      scx_example_pair scxl_example_flat
+	      scx_example_pair scxu_example_fifo scxl_example_flat
 
 .PHONY: all clean
