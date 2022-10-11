@@ -1043,6 +1043,11 @@ config RT_GROUP_SCHED
 	  realtime bandwidth for them.
 	  See Documentation/scheduler/sched-rt-group.rst for more information.
 
+config EXT_GROUP_SCHED
+        bool "Group scheduling for sched_ext"
+        depends on SCHED_CLASS_EXT && CGROUP_SCHED
+        default CGROUP_SCHED
+
 endif #CGROUP_SCHED
 
 config UCLAMP_TASK_GROUP
