@@ -2193,8 +2193,8 @@ struct sched_class {
 				 const struct cpumask *newmask,
 				 u32 flags);
 
-	void (*rq_online)(struct rq *rq);
-	void (*rq_offline)(struct rq *rq);
+	void (*rq_online)(struct rq *rq, bool for_hotplug);
+	void (*rq_offline)(struct rq *rq, bool for_hotplug);
 
 	struct rq *(*find_lock_rq)(struct task_struct *p, struct rq *rq);
 #endif
@@ -2717,8 +2717,8 @@ static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
 	raw_spin_rq_unlock(rq1);
 }
 
-extern void set_rq_online (struct rq *rq);
-extern void set_rq_offline(struct rq *rq);
+extern void set_rq_online (struct rq *rq, bool for_hotplug);
+extern void set_rq_offline(struct rq *rq, bool for_hotplug);
 extern bool sched_smp_initialized;
 
 #else /* CONFIG_SMP */
