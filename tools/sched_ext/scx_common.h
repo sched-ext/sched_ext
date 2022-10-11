@@ -52,6 +52,23 @@ extern s32 scx_bpf_cpumask_first(const struct cpumask *cpus_allowed) __ksym;
 extern s32 scx_bpf_cpumask_first_untyped(unsigned long cpus_allowed) __ksym;
 extern bool scx_bpf_cpumask_intersects(const struct cpumask *src1p, const struct cpumask *src2p) __ksym;
 
+extern int extl_bpf_init(u32 le_data_size_req, u32 sq_data_size_req) __ksym;
+extern int extl_bpf_enable(void) __ksym;
+extern struct extl_sq *extl_bpf_create_sq(u64 id) __ksym;
+extern void extl_bpf_set_task_sq(struct task_struct *p, struct extl_sq *sq) __ksym;
+extern struct extl_sq *extl_bpf_task_sq(struct task_struct *p) __ksym;
+extern struct extl_sq *extl_bpf_find_sq(u64 id) __ksym;
+extern void extl_bpf_sq_lock(struct extl_sq *sq) __ksym;
+extern void extl_bpf_sq_lock_by_task(struct task_struct *p) __ksym;
+extern void extl_bpf_sq_unlock(void) __ksym;
+extern void extl_bpf_sq_lock_double(struct extl_sq *sq0, struct extl_sq *sq1) __ksym;
+extern void extl_bpf_sq_lock_double_by_task(struct task_struct *p, struct extl_sq *sq) __ksym;
+extern void extl_bpf_sq_unlock_double(void) __ksym;
+extern void extl_bpf_enqueue_task(struct task_struct *p, u64 key) __ksym;
+extern bool extl_bpf_dequeue_task(struct task_struct *p) __ksym;
+extern void extl_bpf_dispatch_dequeue(struct task_struct *p) __ksym;
+extern struct task_struct *extl_bpf_sq_first_task(struct extl_sq *sq) __ksym;
+
 #define PF_KTHREAD			0x00200000	/* I am a kernel thread */
 #define PF_EXITING			0x00000004
 #define CLOCK_MONOTONIC			1

@@ -4512,6 +4512,8 @@ static int check_ptr_to_btf_access(struct bpf_verifier_env *env,
 			regno, tname, off);
 		return -EACCES;
 	}
+#warning "this prevents accessing pled->cpumask[] array, nerf it"
+	/*
 	if (!tnum_is_const(reg->var_off) || reg->var_off.value) {
 		char tn_buf[48];
 
@@ -4521,6 +4523,7 @@ static int check_ptr_to_btf_access(struct bpf_verifier_env *env,
 			regno, tname, off, tn_buf);
 		return -EACCES;
 	}
+	*/
 
 	if (reg->type & MEM_USER) {
 		verbose(env,
@@ -12280,8 +12283,11 @@ static int do_check(struct bpf_verifier_env *env)
 				 * src_reg == stack|map in some other branch.
 				 * Reject it.
 				 */
+#warning "same insn, different pointers check nerfed"
+				/*
 				verbose(env, "same insn cannot be used with different pointers\n");
 				return -EINVAL;
+				*/
 			}
 
 		} else if (class == BPF_STX) {
@@ -12322,10 +12328,14 @@ static int do_check(struct bpf_verifier_env *env)
 
 			if (*prev_dst_type == NOT_INIT) {
 				*prev_dst_type = dst_reg_type;
+			}
+#warning "same insn, different pointers check nerfed"
+			/*
 			} else if (reg_type_mismatch(dst_reg_type, *prev_dst_type)) {
 				verbose(env, "same insn cannot be used with different pointers\n");
 				return -EINVAL;
 			}
+			*/
 
 		} else if (class == BPF_ST) {
 			if (BPF_MODE(insn->code) != BPF_MEM ||

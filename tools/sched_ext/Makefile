@@ -112,7 +112,8 @@ BPF_CFLAGS = -g -D__TARGET_ARCH_$(SRCARCH)					\
 	     $(call get_sys_includes,$(CLANG))					\
 	     -Wno-compare-distinct-pointer-types
 
-all: scx_example_dummy scx_example_qmap scx_example_central scx_example_pair
+all: scx_example_dummy scx_example_qmap scx_example_central scx_example_pair	\
+     scxl_example_flat
 
 # sort removes libbpf duplicates when not cross-building
 MAKE_DIRS := $(sort $(BUILD_DIR)/libbpf $(HOST_BUILD_DIR)/libbpf		\
@@ -179,10 +180,16 @@ scx_example_pair: scx_example_pair.c scx_example_pair.skel.h
 	$(CC) $(CFLAGS) -c $< -o $@.o
 	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
 
+scxl_example_flat.bpf.o: scxl_example_flat.h scx_ravg.h
+
+scxl_example_flat: scxl_example_flat.c scxl_example_flat.skel.h
+	$(CC) $(CFLAGS) -c $< -o $@.o
+	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
+
 clean:
 	rm -rf $(SCRATCH_DIR) $(HOST_SCRATCH_DIR)
 	rm -f *.o *.skel.h *.subskel.h
 	rm -f scx_example_dummy scx_example_qmap scx_example_central		\
-	      scx_example_pair
+	      scx_example_pair scxl_example_flat
 
 .PHONY: all clean

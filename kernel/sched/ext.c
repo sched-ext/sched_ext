@@ -575,6 +575,8 @@ static void do_enqueue_task(struct rq *rq, struct task_struct *p, u64 enq_flags,
 			atomic64_set(&p->scx.ops_state,
 				     SCX_OPSS_QUEUEING | qseq);
 
+			extl_enqueue_pre(p);
+
 			if (SCX_HAS_OP(enqueue) &&
 			    (static_branch_unlikely(&scx_ops_enq_last) ||
 			     !(enq_flags & SCX_ENQ_LAST))) {
@@ -588,6 +590,8 @@ static void do_enqueue_task(struct rq *rq, struct task_struct *p, u64 enq_flags,
 				else
 					dq_id = SCX_DQ_GLOBAL;
 			}
+
+			extl_enqueue_post(p, dq_id);
 
 			enq_flags |= SCX_ENQ_CLEAR_OPSS;
 		}
@@ -678,8 +682,10 @@ static void dequeue_task_scx(struct rq *rq, struct task_struct *p, int deq_flags
 		case SCX_OPSS_QUEUEING:
 			BUG();
 		case SCX_OPSS_QUEUED:
+			extl_dequeue_pre(p);
 			if (SCX_HAS_OP(dequeue))
 				scx_ops.dequeue(p, deq_flags);
+			extl_dequeue_post(p, deq_flags);
 
 			if (atomic64_try_cmpxchg(&p->scx.ops_state, &opss,
 						 SCX_OPSS_NONE))
@@ -1192,6 +1198,8 @@ retry:
 
 		*this_cpu_ptr(&dispatch_buf_cursor) = 0;
 
+		extl_dispatch_pre();
+
 		/*
 		 * Passing in a task not initialized for ops can confuse it.
 		 * Pass in NULL if @prev is not known to ops.
@@ -1200,6 +1208,8 @@ retry:
 			err = scx_ops.dispatch(cpu_of(rq), prev);
 		else
 			err = scx_ops.dispatch(cpu_of(rq), NULL);
+
+		extl_dispatch_post();
 
 		if (unlikely(err)) {
 			err = ops_sanitize_err("dispatch", err);
@@ -1591,21 +1601,30 @@ static struct cgroup *tg_cgrp(struct task_group *tg)
 
 static int scx_ops_prep_enable(struct task_struct *p, struct task_group *tg)
 {
+	int ret;
+
+	ret = extl_prep_enable_pre(p, tg);
+	if (ret)
+		return ret;
+
 	if (SCX_HAS_OP(prep_enable)) {
 		struct scx_enable_args args = { .cgroup = tg_cgrp(tg) };
-		int ret;
 
 		ret = scx_ops.prep_enable(p, &args);
 		if (unlikely(ret))
-			return ops_sanitize_err("prep_enable", ret);
+			ret = ops_sanitize_err("prep_enable", ret);
 	}
+	if (ret)
+		extl_cancel_enable(p, tg);
 
-	return 0;
+	return ret;
 }
 
 static void scx_ops_enable_task(struct task_struct *p)
 {
 	lockdep_assert_rq_held(task_rq(p));
+
+	extl_enable_pre(p);
 
 	if (SCX_HAS_OP(enable)) {
 		struct scx_enable_args args =
@@ -1613,6 +1632,8 @@ static void scx_ops_enable_task(struct task_struct *p)
 		scx_ops.enable(p, &args);
 	}
 	p->scx.flags |= SCX_TASK_OPS_ENABLED;
+
+	extl_enable_post(p);
 }
 
 static void scx_ops_cancel_enable(struct task_struct *p, struct task_group *tg)
@@ -1621,6 +1642,7 @@ static void scx_ops_cancel_enable(struct task_struct *p, struct task_group *tg)
 		struct scx_enable_args args = { .cgroup = tg_cgrp(tg) };
 		scx_ops.cancel_enable(p, &args);
 	}
+	extl_cancel_enable(p, tg);
 }
 
 static void scx_ops_disable_task(struct task_struct *p)
@@ -1630,6 +1652,7 @@ static void scx_ops_disable_task(struct task_struct *p)
 	if (p->scx.flags & SCX_TASK_OPS_ENABLED) {
 		if (SCX_HAS_OP(disable))
 			scx_ops.disable(p);
+		extl_disable(p);
 		p->scx.flags &= ~SCX_TASK_OPS_ENABLED;
 	}
 }
@@ -2327,6 +2350,7 @@ forward_progress_guaranteed:
 
 	memset(&scx_ops, 0, sizeof(scx_ops));
 	reset_dispatch();
+	extl_exit();
 
 	percpu_up_write(&scx_ops_rwsem);
 	cpus_read_unlock();
@@ -2613,6 +2637,7 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 
 err_reset:
 	reset_dispatch();
+	extl_exit();
 err_unlock:
 	percpu_up_write(&scx_ops_rwsem);
 	cpus_read_unlock();
@@ -2677,6 +2702,13 @@ static int bpf_scx_btf_struct_access(struct bpf_verifier_log *log,
 				     int size, enum bpf_access_type atype,
 				     u32 *next_btf_id, enum bpf_type_flag *flag)
 {
+	int ret;
+
+	ret = bpf_sched_extl_btf_struct_access(log, btf, t, off, size, atype,
+					       next_btf_id);
+	if (ret != -EAGAIN)
+		return ret;
+
 	if (t == task_struct_type) {
 		if (off >= offsetof(struct task_struct, scx.slice) &&
 		    off + size <= offsetofend(struct task_struct, scx.slice))
@@ -2784,7 +2816,7 @@ static int bpf_scx_init(struct btf *btf)
 		return -EINVAL;
 	task_struct_type = btf_type_by_id(btf, type_id);
 
-	return 0;
+	return bpf_sched_extl_init(btf);
 }
 
 /* "extern" to avoid sparse warning, only used in this file */
@@ -3101,7 +3133,7 @@ __used noinline u32 scx_bpf_dispatch_nr_slots(void)
  */
 __used noinline s32 scx_bpf_dispatch(struct task_struct *p, s64 dq_id)
 {
-	int idx;
+	int idx, ret;
 
 	lockdep_assert_irqs_disabled();
 
@@ -3115,6 +3147,10 @@ __used noinline s32 scx_bpf_dispatch(struct task_struct *p, s64 dq_id)
 		scx_ops_error("dispatch buffer overflow");
 		return -EOVERFLOW;
 	}
+
+	ret = extl_task_dispatched(p);
+	if (unlikely(ret < 0))
+		return ret;
 
 	this_cpu_ptr(dispatch_buf)[idx] = (struct dispatch_buf_ent){
 		.task = p,
