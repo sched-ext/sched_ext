@@ -945,7 +945,10 @@ u64 notrace __bpf_prog_enter_sleepable(struct bpf_prog *prog, struct bpf_tramp_r
 
 	if (unlikely(this_cpu_inc_return(*(prog->active)) != 1)) {
 		bpf_prog_inc_misses_counter(prog);
+#warning "we should selectively skip the following return for sched_ext sleepable progs as they can't recurse"
+		/*
 		return 0;
+		*/
 	}
 
 	run_ctx->saved_run_ctx = bpf_set_run_ctx(&run_ctx->run_ctx);
