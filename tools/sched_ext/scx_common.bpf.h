@@ -48,6 +48,7 @@ void ___scx_bpf_error_format_checker(const char *fmt, ...) {}
 	___scx_bpf_error_format_checker(fmt, ##args);				\
 })
 
+extern void scx_bpf_switch_all(void) __ksym;
 extern s32 scx_bpf_create_dsq(u64 dsq_id, s32 node) __ksym;
 extern bool scx_bpf_consume(u64 dsq_id) __ksym;
 extern u32 scx_bpf_dispatch_nr_slots(void) __ksym;
