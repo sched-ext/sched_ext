@@ -60,6 +60,7 @@ enum scx_exit_type {
 
 	SCX_EXIT_ERROR = 1024,	/* runtime error, error msg contains details */
 	SCX_EXIT_ERROR_BPF,	/* ERROR but triggered through scx_bpf_error() */
+	SCX_EXIT_ERROR_STALL,	/* watchdog detected stalled runnable tasks */
 };
 
 struct scx_exit_info {
@@ -316,6 +317,15 @@ struct sched_ext_ops {
 	u64 flags;
 
 	/**
+	 * timeout_ms - The maximum amount of time, in milliseconds, that a
+	 * runnable task should be able to wait before being scheduled. The
+	 * maximum timeout may not exceed the default timeout of 30 seconds.
+	 *
+	 * Defaults to the maximum allowed timeout value of 30 seconds.
+	 */
+	u32 timeout_ms;
+
+	/**
 	 * name - BPF scheduler's name
 	 *
 	 * Must be a non-zero valid BPF object name including only isalnum(),
@@ -345,6 +355,8 @@ enum scx_ent_flags {
 	SCX_TASK_OPS_PREPPED	= 1 << 3, /* prepared for BPF scheduler enable */
 	SCX_TASK_OPS_ENABLED	= 1 << 4, /* task has BPF scheduler enabled */
 
+	SCX_TASK_WATCHDOG_RESET = 1 << 5, /* task watchdog counter should be reset */
+
 	SCX_TASK_CURSOR		= 1 << 6, /* iteration cursor, not a task */
 };
 
@@ -353,11 +365,13 @@ struct extl_entity;
 struct sched_ext_entity {
 	struct scx_dispatch_q	*dsq;
 	struct list_head	dsq_node;
+	struct list_head	watchdog_node;
 	u32			flags;		/* protected by rq lock */
 	u32			weight;
 	s32			sticky_cpu;
 	s32			holding_cpu;
 	atomic64_t		ops_state;
+	unsigned long		runnable_at;
 
 	/* BPF scheduler modifiable fields */
 
