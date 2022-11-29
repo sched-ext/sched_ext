@@ -67,6 +67,8 @@ void sched_enq_and_set_task(struct sched_enq_and_set_ctx *ctx);
 extern const struct sched_class ext_sched_class;
 extern const struct bpf_verifier_ops bpf_sched_ext_verifier_ops;
 extern const struct file_operations sched_ext_fops;
+extern unsigned long task_runnable_timeout_ms;
+extern unsigned long last_timeout_check;
 
 DECLARE_STATIC_KEY_FALSE(__scx_ops_enabled);
 #define scx_enabled()		static_branch_unlikely(&__scx_ops_enabled)
@@ -78,6 +80,29 @@ void scx_post_fork(struct task_struct *p);
 void scx_cancel_fork(struct task_struct *p);
 int balance_scx(struct rq *rq, struct task_struct *prev, struct rq_flags *rf);
 void init_sched_ext_class(void);
+
+__printf(2, 3) void scx_ops_error_type(enum scx_exit_type type,
+				       const char *fmt, ...);
+#define scx_ops_error(fmt, args...)						\
+	scx_ops_error_type(SCX_EXIT_ERROR, fmt, ##args)
+
+static inline void scx_notify_sched_tick(void)
+{
+	unsigned long last_check, timeout;
+
+	if (!scx_enabled())
+		return;
+
+	last_check = last_timeout_check;
+	timeout = msecs_to_jiffies(task_runnable_timeout_ms);
+	if (unlikely(time_after(jiffies, last_check + timeout))) {
+		u32 dur_ms = jiffies_to_msecs(jiffies - last_check);
+
+		scx_ops_error_type(SCX_EXIT_ERROR_STALL,
+				   "watchdog failed to check in for %u.%03us",
+				   dur_ms / 1000, dur_ms % 1000);
+	}
+}
 
 static inline const struct sched_class *next_active_class(const struct sched_class *class)
 {
@@ -112,6 +137,7 @@ static inline void scx_cancel_fork(struct task_struct *p) {}
 static inline int balance_scx(struct rq *rq, struct task_struct *prev,
 			      struct rq_flags *rf) { return 0; }
 static inline void init_sched_ext_class(void) {}
+static inline void scx_notify_sched_tick(void) {}
 
 #define for_each_active_class		for_each_class
 #define for_balance_class_range		for_class_range
