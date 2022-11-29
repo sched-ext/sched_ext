@@ -394,6 +394,10 @@ struct sched_ext_entity {
 	 * non-zero value before the task starts running. Automatically
 	 * decreased by SCX as the task executes. On depletion, a scheduling
 	 * event is triggered.
+	 *
+	 * This value can be cleared to zero if the task is preempted by
+	 * %SCX_KICK_PREEMPT and thus can't be used to determine how long the
+	 * task ran. Use p->se.sum_exec_runtime instead.
 	 */
 	u64			slice;
 
