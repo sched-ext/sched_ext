@@ -60,6 +60,7 @@ extern s32 scx_bpf_pick_idle_cpu(const cpumask_t *cpus_allowed) __ksym;
 extern void scx_bpf_destroy_dsq(u64 dsq_id) __ksym;
 extern bool scx_bpf_task_running(const struct task_struct *p) __ksym;
 extern s32 scx_bpf_task_cpu(const struct task_struct *p) __ksym;
+extern u32 scx_bpf_reenqueue_local(void) __ksym;
 
 /* XXX - temporary ones to be replaced by generic BPF helpers */
 extern struct cgroup *scx_bpf_task_cgroup(const struct task_struct *p) __ksym;
