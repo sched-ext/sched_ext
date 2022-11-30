@@ -692,6 +692,7 @@ struct cfs_rq {
 #ifdef CONFIG_SCHED_CLASS_EXT
 struct scx_rq {
 	struct scx_dispatch_q	local_dsq;
+	struct list_head	watchdog_list;
 	u64			ops_qseq;
 	u32			nr_running;
 #ifdef CONFIG_SMP
