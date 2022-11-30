@@ -73,6 +73,10 @@ static DEFINE_MUTEX(scx_ops_enable_mutex);
 DEFINE_STATIC_KEY_FALSE(__scx_ops_enabled);
 DEFINE_STATIC_PERCPU_RWSEM(scx_fork_rwsem);
 static atomic_t scx_ops_enable_state_var = ATOMIC_INIT(SCX_OPS_DISABLED);
+static bool scx_switch_all_req;
+static bool scx_switching_all;
+DEFINE_STATIC_KEY_FALSE(__scx_switched_all);
+
 static struct sched_ext_ops scx_ops;
 static bool warned_zero_slice;
 
@@ -1844,6 +1848,8 @@ bool task_on_scx(struct task_struct *p)
 {
 	if (!scx_enabled() || scx_ops_disabling())
 		return false;
+	if (READ_ONCE(scx_switching_all))
+		return true;
 	return p->policy == SCHED_EXT;
 }
 
@@ -1981,6 +1987,9 @@ forward_progress_guaranteed:
 	 * disable ops.
 	 */
 	mutex_lock(&scx_ops_enable_mutex);
+
+	static_branch_disable(&__scx_switched_all);
+	WRITE_ONCE(scx_switching_all, false);
 
 	/* avoid racing against fork */
 	cpus_read_lock();
@@ -2159,6 +2168,7 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 	 */
 	cpus_read_lock();
 
+	scx_switch_all_req = false;
 	if (scx_ops.init) {
 		ret = scx_ops.init();
 
@@ -2281,6 +2291,8 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 	 * transitions here are synchronized against sched_ext_free() through
 	 * scx_tasks_lock.
 	 */
+	WRITE_ONCE(scx_switching_all, scx_switch_all_req);
+
 	scx_task_iter_init(&sti);
 	while ((p = scx_task_iter_next_filtered_locked(&sti))) {
 		if (READ_ONCE(p->__state) != TASK_DEAD) {
@@ -2311,6 +2323,9 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 		ret = -EBUSY;
 		goto err_disable_unlock;
 	}
+
+	if (scx_switch_all_req)
+		static_branch_enable_cpuslocked(&__scx_switched_all);
 
 	cpus_read_unlock();
 	mutex_unlock(&scx_ops_enable_mutex);
@@ -2346,6 +2361,9 @@ static int scx_debug_show(struct seq_file *m, void *v)
 	mutex_lock(&scx_ops_enable_mutex);
 	seq_printf(m, "%-30s: %s\n", "ops", scx_ops.name);
 	seq_printf(m, "%-30s: %ld\n", "enabled", scx_enabled());
+	seq_printf(m, "%-30s: %d\n", "switching_all",
+		   READ_ONCE(scx_switching_all));
+	seq_printf(m, "%-30s: %ld\n", "switched_all", scx_switched_all());
 	seq_printf(m, "%-30s: %s\n", "enable_state",
 		   scx_ops_enable_state_str[scx_ops_enable_state()]);
 	seq_printf(m, "%-30s: %llu\n", "nr_rejected",
@@ -2585,6 +2603,28 @@ void __init init_sched_ext_class(void)
 __diag_push();
 __diag_ignore_all("-Wmissing-prototypes",
 		  "Global functions as their definitions will be in vmlinux BTF");
+
+/**
+ * scx_bpf_switch_all - Switch all tasks into SCX
+ * @into_scx: switch direction
+ *
+ * If @into_scx is %true, all existing and future non-dl/rt tasks are switched
+ * to SCX. If %false, only tasks which have %SCHED_EXT explicitly set are put on
+ * SCX. The actual switching is asynchronous. Can be called from ops.init().
+ */
+void scx_bpf_switch_all(void)
+{
+	scx_switch_all_req = true;
+}
+
+BTF_SET8_START(scx_kfunc_ids_init)
+BTF_ID_FLAGS(func, scx_bpf_switch_all)
+BTF_SET8_END(scx_kfunc_ids_init)
+
+static const struct btf_kfunc_id_set scx_kfunc_set_init = {
+	.owner			= THIS_MODULE,
+	.set			= &scx_kfunc_ids_init,
+};
 
 /**
  * scx_bpf_create_dsq - Create a dsq
@@ -3015,6 +3055,8 @@ static int __init register_ext_kfuncs(void)
 	 * allow all kfuncs for everybody.
 	 */
 	if ((ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
+					     &scx_kfunc_set_init)) ||
+	    (ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
 					     &scx_kfunc_set_sleepable)) ||
 	    (ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
 					    &scx_kfunc_set_dispatch)) ||
