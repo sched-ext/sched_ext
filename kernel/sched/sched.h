@@ -711,6 +711,7 @@ struct scx_rq {
 	u64			ops_qseq;
 	u32			nr_running;
 	u32			flags;
+	bool			cpu_released;
 #ifdef CONFIG_SMP
 	cpumask_var_t		cpus_to_kick;
 	cpumask_var_t		cpus_to_preempt;
