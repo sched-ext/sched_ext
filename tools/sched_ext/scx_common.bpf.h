@@ -53,6 +53,7 @@ extern s32 scx_bpf_create_dsq(u64 dsq_id, s32 node) __ksym;
 extern bool scx_bpf_consume(u64 dsq_id) __ksym;
 extern u32 scx_bpf_dispatch_nr_slots(void) __ksym;
 extern void scx_bpf_dispatch(struct task_struct *p, u64 dsq_id, u64 slice, u64 enq_flags) __ksym;
+extern void scx_bpf_kick_cpu(s32 cpu, u64 flags) __ksym;
 extern s32 scx_bpf_dsq_nr_queued(u64 dsq_id) __ksym;
 extern bool scx_bpf_test_and_clear_cpu_idle(s32 cpu) __ksym;
 extern s32 scx_bpf_pick_idle_cpu(const cpumask_t *cpus_allowed) __ksym;

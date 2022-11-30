@@ -698,6 +698,7 @@ struct scx_rq {
 #ifdef CONFIG_SMP
 	cpumask_var_t		cpus_to_kick;
 	cpumask_var_t		cpus_to_preempt;
+	struct irq_work		kick_cpus_irq_work;
 #endif
 };
 #endif /* CONFIG_SCHED_CLASS_EXT */
