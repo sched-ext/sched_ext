@@ -506,7 +506,12 @@ extern void sched_online_group(struct task_group *tg,
 extern void sched_destroy_group(struct task_group *tg);
 extern void sched_release_group(struct task_group *tg);
 
-extern void sched_move_task(struct task_struct *tsk);
+enum sched_move_task_reason {
+	SCHED_MOVE_TASK_CGROUP,
+	SCHED_MOVE_TASK_AUTOGROUP,
+};
+extern void sched_move_task(struct task_struct *tsk,
+			    enum sched_move_task_reason reason);
 
 #ifdef CONFIG_FAIR_GROUP_SCHED
 extern int sched_group_set_shares(struct task_group *tg, unsigned long shares);

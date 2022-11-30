@@ -10210,7 +10210,7 @@ static void sched_change_group(struct task_struct *tsk)
  * now. This function just updates tsk->se.cfs_rq and tsk->se.parent to reflect
  * its new group.
  */
-void sched_move_task(struct task_struct *tsk)
+void sched_move_task(struct task_struct *tsk, enum sched_move_task_reason reason)
 {
 	int queued, running, queue_flags =
 		DEQUEUE_SAVE | DEQUEUE_MOVE | DEQUEUE_NOCLOCK;
@@ -10321,7 +10321,7 @@ static void cpu_cgroup_attach(struct cgroup_taskset *tset)
 	struct cgroup_subsys_state *css;
 
 	cgroup_taskset_for_each(task, css, tset)
-		sched_move_task(task);
+		sched_move_task(task, SCHED_MOVE_TASK_CGROUP);
 }
 
 #ifdef CONFIG_UCLAMP_TASK_GROUP
