@@ -2745,6 +2745,86 @@ static const struct btf_kfunc_id_set scx_kfunc_set_any = {
 	.set			= &scx_kfunc_ids_any,
 };
 
+/********************************************************************************
+ * Temporary BPF helpers to be replaced by generic non-scx-specific BPF helpers
+ */
+
+struct cgroup *scx_bpf_task_cgroup(const struct task_struct *p)
+{
+	struct task_group *tg = p->sched_task_group;
+
+	if (tg && tg->css.cgroup)
+		return tg->css.cgroup;
+	else
+		return &cgrp_dfl_root.cgrp;
+}
+
+struct task_struct *scx_bpf_find_task_by_pid(s32 pid)
+{
+	return find_task_by_pid_ns(pid, &init_pid_ns);
+}
+
+s32 scx_bpf_pick_idle_cpu_untyped(unsigned long cpus_allowed)
+{
+	return scx_bpf_pick_idle_cpu((const struct cpumask *)cpus_allowed);
+}
+
+bool scx_bpf_has_idle_cpus_among(const struct cpumask *cpus_allowed)
+{
+	if (!static_branch_likely(&scx_builtin_idle_enabled)) {
+		scx_ops_error("built-in idle tracking is disabled");
+		return false;
+	}
+#ifdef CONFIG_SMP
+	return cpumask_any_and(idle_masks.cpu, cpus_allowed) < nr_cpu_ids;
+#else
+	return false;
+#endif
+}
+
+s32 scx_bpf_has_idle_cpus_among_untyped(unsigned long cpus_allowed)
+{
+	return scx_bpf_has_idle_cpus_among((const struct cpumask *)cpus_allowed);
+}
+
+s32 scx_bpf_cpumask_test_cpu(s32 cpu, const struct cpumask *cpumask)
+{
+	return cpumask_test_cpu(cpu, cpumask);
+}
+
+s32 scx_bpf_cpumask_first(const struct cpumask *cpus_allowed)
+{
+	return cpumask_first(cpus_allowed);
+}
+
+s32 scx_bpf_cpumask_first_untyped(unsigned long cpus_allowed)
+{
+	return cpumask_first((const struct cpumask *)cpus_allowed);
+}
+
+bool scx_bpf_cpumask_intersects(const struct cpumask *src1p,
+				const struct cpumask *src2p)
+{
+	return cpumask_intersects(src1p, src2p);
+}
+
+BTF_SET8_START(scx_kfunc_ids_xxx)
+BTF_ID_FLAGS(func, scx_bpf_task_cgroup)
+BTF_ID_FLAGS(func, scx_bpf_find_task_by_pid, KF_RET_NULL)
+BTF_ID_FLAGS(func, scx_bpf_pick_idle_cpu_untyped)
+BTF_ID_FLAGS(func, scx_bpf_has_idle_cpus_among)
+BTF_ID_FLAGS(func, scx_bpf_has_idle_cpus_among_untyped)
+BTF_ID_FLAGS(func, scx_bpf_cpumask_test_cpu)
+BTF_ID_FLAGS(func, scx_bpf_cpumask_first)
+BTF_ID_FLAGS(func, scx_bpf_cpumask_first_untyped)
+BTF_ID_FLAGS(func, scx_bpf_cpumask_intersects)
+BTF_SET8_END(scx_kfunc_ids_xxx)
+
+static const struct btf_kfunc_id_set scx_kfunc_set_xxx = {
+	.owner			= THIS_MODULE,
+	.set			= &scx_kfunc_ids_xxx,
+};
+
 __diag_pop();
 
 /*
@@ -2770,7 +2850,9 @@ static int __init register_ext_kfuncs(void)
 	    (ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
 					     &scx_kfunc_set_online)) ||
 	    (ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
-					     &scx_kfunc_set_any))) {
+					     &scx_kfunc_set_any)) ||
+	    (ret = register_btf_kfunc_id_set(BPF_PROG_TYPE_STRUCT_OPS,
+					     &scx_kfunc_set_xxx))) {
 		pr_err("sched_ext: failed to register kfunc sets (%d)\n", ret);
 		return ret;
 	}
