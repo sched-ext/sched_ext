@@ -163,7 +163,12 @@ static inline int __task_prio(struct task_struct *p)
 	if (p->sched_class == &idle_sched_class)
 		return MAX_RT_PRIO + NICE_WIDTH; /* 140 */
 
-	return MAX_RT_PRIO + MAX_NICE; /* 120, squash fair */
+#ifdef CONFIG_SCHED_CLASS_EXT
+	if (p->sched_class == &ext_sched_class)
+		return MAX_RT_PRIO + MAX_NICE + 1; /* 120, squash ext */
+#endif
+
+	return MAX_RT_PRIO + MAX_NICE; /* 119, squash fair */
 }
 
 /*
@@ -190,6 +195,11 @@ static inline bool prio_less(struct task_struct *a, struct task_struct *b, bool 
 
 	if (pa == MAX_RT_PRIO + MAX_NICE)	/* fair */
 		return cfs_prio_less(a, b, in_fi);
+
+#ifdef CONFIG_SCHED_CLASS_EXT
+	if (pa == MAX_RT_PRIO + MAX_NICE + 1)	/* ext */
+		return scx_prio_less(a, b, in_fi);
+#endif
 
 	return false;
 }
