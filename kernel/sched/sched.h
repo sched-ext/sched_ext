@@ -690,6 +690,9 @@ struct scx_rq {
 	struct list_head	watchdog_list;
 	u64			ops_qseq;
 	u32			nr_running;
+	cpumask_var_t		cpus_to_kick;
+	cpumask_var_t		cpus_to_preempt;
+	struct irq_work		kick_cpus_irq_work;
 };
 #endif /* CONFIG_SCHED_CLASS_EXT */
 
