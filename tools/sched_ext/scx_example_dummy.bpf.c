@@ -7,6 +7,7 @@
  *
  * - Statistics tracking how many are queued to local and global dsq's.
  * - Termination notification for userspace.
+ * - Support for switch_all.
  *
  * Copyright (c) 2022 Meta Platforms, Inc. and affiliates.
  * Copyright (c) 2022 Tejun Heo <tj@kernel.org>
@@ -15,6 +16,8 @@
 #include "scx_common.bpf.h"
 
 char _license[] SEC("license") = "GPL";
+
+const volatile bool switch_all;
 
 struct user_exit_info uei;
 
@@ -30,6 +33,13 @@ static void stat_inc(u32 idx)
 	u64 *cnt_p = bpf_map_lookup_elem(&stats, &idx);
 	if (cnt_p)
 		(*cnt_p)++;
+}
+
+s32 BPF_STRUCT_OPS(dummy_init)
+{
+	if (switch_all)
+		scx_bpf_switch_all();
+	return 0;
 }
 
 void BPF_STRUCT_OPS(dummy_enqueue, struct task_struct *p, u64 enq_flags)
@@ -51,6 +61,7 @@ void BPF_STRUCT_OPS(dummy_exit, struct scx_exit_info *ei)
 SEC(".struct_ops")
 struct sched_ext_ops dummy_ops = {
 	.enqueue		= (void *)dummy_enqueue,
+	.init			= (void *)dummy_init,
 	.exit			= (void *)dummy_exit,
 	.name			= "dummy",
 };
