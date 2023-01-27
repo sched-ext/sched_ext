@@ -1,0 +1,5 @@
+scx_example_dummy
+scx_example_qmap
+*.skel.h
+*.subskel.h
+/tools/
