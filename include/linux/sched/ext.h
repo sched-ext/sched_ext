@@ -135,6 +135,32 @@ struct scx_cgroup_init_args {
 	u32			weight;
 };
 
+enum scx_cpu_preempt_reason {
+	/* next task is being scheduled by &sched_class_rt */
+        SCX_CPU_PREEMPT_RT,
+	/* next task is being scheduled by &sched_class_dl */
+        SCX_CPU_PREEMPT_DL,
+	/* next task is being scheduled by &sched_class_stop */
+        SCX_CPU_PREEMPT_STOP,
+	/* unknown reason for SCX being preempted */
+        SCX_CPU_PREEMPT_UNKNOWN,
+};
+
+/*
+ * Argument container for ops->cpu_acquire(). Currently empty, but may be
+ * expanded in the future.
+ */
+struct scx_cpu_acquire_args {};
+
+/* argument container for ops->cpu_release() */
+struct scx_cpu_release_args {
+	/* the reason the CPU was preempted */
+	enum scx_cpu_preempt_reason reason;
+
+	/* the task that's going to be scheduled on the CPU */
+	const struct task_struct *task;
+};
+
 /**
  * struct sched_ext_ops - Operation table for BPF scheduler implementation
  *
@@ -329,6 +355,28 @@ struct sched_ext_ops {
 	 * %SCX_OPS_KEEP_BUILTIN_IDLE flag.
 	 */
 	void (*update_idle)(s32 cpu, bool idle);
+
+	/**
+	 * cpu_acquire - A CPU is becoming available to the BPF scheduler
+	 * @cpu: The CPU being acquired by the BPF scheduler.
+	 * @args: Acquire arguments, see the struct definition.
+	 *
+	 * A CPU that was previously released from the BPF scheduler is now once
+	 * again under its control.
+	 */
+	void (*cpu_acquire)(s32 cpu, struct scx_cpu_acquire_args *args);
+
+	/**
+	 * cpu_release - A CPU is taken away from the BPF scheduler
+	 * @cpu: The CPU being released by the BPF scheduler.
+	 * @args: Release arguments, see the struct definition.
+	 *
+	 * The specified CPU is no longer under the control of the BPF
+	 * scheduler. This could be because it was preempted by a higher
+	 * priority sched_class, though there may be other reasons as well. The
+	 * caller should consult @args->reason to determine the cause.
+	 */
+	void (*cpu_release)(s32 cpu, struct scx_cpu_release_args *args);
 
 	/**
 	 * prep_enable - Prepare to enable BPF scheduling for a task
@@ -534,8 +582,12 @@ enum scx_kf_mask {
 	SCX_KF_INIT		= 1 << 0, /* allowed from ops.init() */
 	SCX_KF_SLEEPABLE	= 1 << 1, /* from sleepable init operations */
 
+	/* ENQUEUE_DISPATCH may be nested inside CPU_RELEASE */
+	SCX_KF_CPU_RELEASE	= 1 << 2, /* from ops.cpu_release() */
+
 	SCX_KF_ENQUEUE_DISPATCH	= 1 << 3, /* from ops.enqueue() or .dispatch() */
 	SCX_KF_DISPATCH		= 1 << 4, /* from ops.dispatch() */
+	__SCX_KF_TERMINAL	= SCX_KF_ENQUEUE_DISPATCH | SCX_KF_DISPATCH,
 };
 
 /*
