@@ -82,6 +82,7 @@ void bpf_cpumask_copy(struct bpf_cpumask *dst, const struct cpumask *src) __ksym
 u32 bpf_cpumask_any(const struct cpumask *cpumask) __ksym;
 u32 bpf_cpumask_any_and(const struct cpumask *src1, const struct cpumask *src2) __ksym;
 
+void scx_bpf_switch_all(void) __ksym;
 s32 scx_bpf_create_dsq(u64 dsq_id, s32 node) __ksym;
 bool scx_bpf_consume(u64 dsq_id) __ksym;
 u32 scx_bpf_dispatch_nr_slots(void) __ksym;
