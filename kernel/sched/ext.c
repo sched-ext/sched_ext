@@ -3324,7 +3324,7 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 
 	if (!scx_ops_tryset_enable_state(SCX_OPS_ENABLED, SCX_OPS_ENABLING)) {
 		ret = -EBUSY;
-		goto err_disable_unlock;
+		goto err_disable;
 	}
 
 	if (scx_switch_all_req)
