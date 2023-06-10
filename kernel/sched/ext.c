@@ -3272,8 +3272,6 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 			spin_lock_irq(&scx_tasks_lock);
 			scx_task_iter_exit(&sti);
 			spin_unlock_irq(&scx_tasks_lock);
-			pr_err("sched_ext: ops.prep_enable() failed (%d) for %s[%d] while loading\n",
-			       ret, p->comm, p->pid);
 			goto err_disable_unlock;
 		}
 
