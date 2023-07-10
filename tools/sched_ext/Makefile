@@ -115,7 +115,7 @@ BPF_CFLAGS = -g -D__TARGET_ARCH_$(SRCARCH)					\
 	     -Wall -Wno-compare-distinct-pointer-types				\
 	     -O2 -mcpu=v3
 
-all: scx_simple scx_qmap scx_central scx_pair
+all: scx_simple scx_qmap scx_central scx_pair scx_flatcg
 
 # sort removes libbpf duplicates when not cross-building
 MAKE_DIRS := $(sort $(BUILD_DIR)/libbpf $(HOST_BUILD_DIR)/libbpf		\
@@ -179,6 +179,10 @@ scx_central: scx_central.c scx_central.skel.h user_exit_info.h
 	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
 
 scx_pair: scx_pair.c scx_pair.skel.h user_exit_info.h
+	$(CC) $(CFLAGS) -c $< -o $@.o
+	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
+
+scx_flatcg: scx_flatcg.c scx_flatcg.skel.h user_exit_info.h
 	$(CC) $(CFLAGS) -c $< -o $@.o
 	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
 
