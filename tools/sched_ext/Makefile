@@ -85,6 +85,8 @@ CFLAGS += -g -O2 -rdynamic -pthread -Wall -Werror $(GENFLAGS)			\
 	  -I$(INCLUDE_DIR) -I$(GENDIR) -I$(LIBDIR)				\
 	  -I$(TOOLSINCDIR) -I$(APIDIR)
 
+CARGOFLAGS := --release
+
 # Silence some warnings when compiled with clang
 ifneq ($(LLVM),)
 CFLAGS += -Wno-unused-command-line-argument
@@ -115,7 +117,7 @@ BPF_CFLAGS = -g -D__TARGET_ARCH_$(SRCARCH)					\
 	     -Wall -Wno-compare-distinct-pointer-types				\
 	     -O2 -mcpu=v3
 
-all: scx_simple scx_qmap scx_central scx_pair scx_flatcg scx_userland
+all: scx_simple scx_qmap scx_central scx_pair scx_flatcg scx_userland scx_atropos
 
 # sort removes libbpf duplicates when not cross-building
 MAKE_DIRS := $(sort $(BUILD_DIR)/libbpf $(HOST_BUILD_DIR)/libbpf		\
@@ -190,12 +192,19 @@ scx_userland: scx_userland.c scx_userland.skel.h scx_userland.h user_exit_info.h
 	$(CC) $(CFLAGS) -c $< -o $@.o
 	$(CC) -o $@ $@.o $(HOST_BPFOBJ) $(LDFLAGS)
 
+scx_atropos: export RUSTFLAGS = -C link-args=-lzstd -C link-args=-lz -C link-args=-lelf -L $(BPFOBJ_DIR)
+scx_atropos: export ATROPOS_CLANG = $(CLANG)
+scx_atropos: export ATROPOS_BPF_CFLAGS = $(BPF_CFLAGS)
+scx_atropos: $(INCLUDE_DIR)/vmlinux.h
+	cargo build --manifest-path=scx_atropos/Cargo.toml $(CARGOFLAGS)
+
 clean:
+	cargo clean --manifest-path=scx_atropos/Cargo.toml
 	rm -rf $(SCRATCH_DIR) $(HOST_SCRATCH_DIR)
 	rm -f *.o *.bpf.o *.skel.h *.subskel.h
 	rm -f scx_simple scx_qmap scx_central scx_pair scx_flatcg scx_userland
 
-.PHONY: all clean
+.PHONY: all scx_atropos clean
 
 # delete failed targets
 .DELETE_ON_ERROR:
