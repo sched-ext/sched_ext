@@ -1,0 +1,18 @@
+NEST_ST(WAKEUP_PREV_PRIMARY, STAT_GRP_WAKEUP, "Previous CPU was idle, and in primary nest")
+NEST_ST(WAKEUP_FULLY_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to fully idle primary nest core")
+NEST_ST(WAKEUP_HT_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to idle logical primary nest core")
+NEST_ST(WAKEUP_FULLY_IDLE_RESERVE, STAT_GRP_WAKEUP, "Woken up to fully idle reserve nest core")
+NEST_ST(WAKEUP_HT_IDLE_RESERVE, STAT_GRP_WAKEUP, "Woken up to idle logical reserve nest core")
+NEST_ST(WAKEUP_IDLE_OTHER, STAT_GRP_WAKEUP, "Woken to any idle logical core in p->cpus_ptr")
+
+NEST_ST(TASK_IMPATIENT, STAT_GRP_NEST, "A task was found to be impatient")
+NEST_ST(PROMOTED_TO_PRIMARY, STAT_GRP_NEST, "A core was promoted into the primary nest")
+NEST_ST(PROMOTED_TO_RESERVED, STAT_GRP_NEST, "A core was promoted into the reserve nest")
+NEST_ST(DEMOTED_TO_RESERVED, STAT_GRP_NEST, "A core was demoted into the reserve nest")
+NEST_ST(PROMOTE_RESERVE_CONTENDED, STAT_GRP_NEST, "Failed to promote to reserved because of races with nr_reserved")
+NEST_ST(DEMOTE_RESERVE_CONTENDED, STAT_GRP_NEST, "Failed to promote to reserved because of races with nr_reserved")
+NEST_ST(RESERVED_AT_CAPACITY, STAT_GRP_NEST, "Reserved nest was at capacity")
+NEST_ST(RENEWED_IN_PRIMARY, STAT_GRP_NEST, "A primary core's last touched timestamp was renewed")
+
+NEST_ST(CONSUMED, STAT_GRP_CONSUME, "A task was consumed from the global DSQ")
+NEST_ST(NOT_CONSUMED, STAT_GRP_CONSUME, "There was no task in the global DSQ")
