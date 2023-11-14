@@ -20,6 +20,14 @@ enum scx_ops_enable_state {
 	SCX_OPS_DISABLED,
 };
 
+static const char *scx_ops_enable_state_str[] = {
+	[SCX_OPS_PREPPING]	= "prepping",
+	[SCX_OPS_ENABLING]	= "enabling",
+	[SCX_OPS_ENABLED]	= "enabled",
+	[SCX_OPS_DISABLING]	= "disabling",
+	[SCX_OPS_DISABLED]	= "disabled",
+};
+
 /*
  * sched_ext_entity->ops_state
  *
@@ -2560,14 +2568,6 @@ err_disable:
 }
 
 #ifdef CONFIG_SCHED_DEBUG
-static const char *scx_ops_enable_state_str[] = {
-	[SCX_OPS_PREPPING]	= "prepping",
-	[SCX_OPS_ENABLING]	= "enabling",
-	[SCX_OPS_ENABLED]	= "enabled",
-	[SCX_OPS_DISABLING]	= "disabling",
-	[SCX_OPS_DISABLED]	= "disabled",
-};
-
 static int scx_debug_show(struct seq_file *m, void *v)
 {
 	mutex_lock(&scx_ops_enable_mutex);
@@ -2786,6 +2786,51 @@ static const struct sysrq_key_op sysrq_sched_ext_reset_op = {
 	.action_msg	= "Disable sched_ext and revert all tasks to CFS",
 	.enable_mask	= SYSRQ_ENABLE_RTNICE,
 };
+
+/**
+ * print_scx_info - print out sched_ext scheduler state
+ * @log_lvl: the log level to use when printing
+ * @p: target task
+ *
+ * If a sched_ext scheduler is enabled, print the name and state of the
+ * scheduler. If @p is on sched_ext, print further information about the task.
+ *
+ * This function can be safely called on any task as long as the task_struct
+ * itself is accessible. While safe, this function isn't synchronized and may
+ * print out mixups or garbages of limited length.
+ */
+void print_scx_info(const char *log_lvl, struct task_struct *p)
+{
+	enum scx_ops_enable_state state = scx_ops_enable_state();
+	const char *all = READ_ONCE(scx_switching_all) ? "+all" : "";
+	char runnable_at_buf[22] = "?";
+	struct sched_class *class;
+	unsigned long runnable_at;
+
+	if (state == SCX_OPS_DISABLED)
+		return;
+
+	/*
+	 * Carefully check if the task was running on sched_ext, and then
+	 * carefully copy the time it's been runnable, and its state.
+	 */
+	if (copy_from_kernel_nofault(&class, &p->sched_class, sizeof(class)) ||
+	    class != &ext_sched_class) {
+		printk("%sSched_ext: %s (%s%s)", log_lvl, scx_ops.name,
+		       scx_ops_enable_state_str[state], all);
+		return;
+	}
+
+	if (!copy_from_kernel_nofault(&runnable_at, &p->scx.runnable_at,
+				      sizeof(runnable_at)))
+		scnprintf(runnable_at_buf, sizeof(runnable_at_buf), "%+lldms",
+			  (s64)(runnable_at - jiffies) * (HZ / MSEC_PER_SEC));
+
+	/* Print everything onto one line to conserve console spce. */
+	printk("%sSched_ext: %s (%s%s), task: runnable_at=%s",
+	       log_lvl, scx_ops.name, scx_ops_enable_state_str[state], all,
+	       runnable_at_buf);
+}
 
 void __init init_sched_ext_class(void)
 {
