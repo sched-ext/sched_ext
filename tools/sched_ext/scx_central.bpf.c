@@ -255,11 +255,15 @@ static int central_timerfn(void *map, int *key, struct bpf_timer *timer)
 	s32 i, curr_cpu;
 
 	curr_cpu = bpf_get_smp_processor_id();
-	if (curr_cpu != central_cpu) {
+	/*
+	 * XXX BACKPORT NOTE - BPF_F_TIMER_CPU_PIN is not available in v6.6 and
+	 * we can't guarantee that the central timer runs on the central CPU.
+	 */
+	/*if (curr_cpu != central_cpu) {
 		scx_bpf_error("Central timer ran on CPU %d, not central CPU %d",
 			      curr_cpu, central_cpu);
 		return 0;
-	}
+	}*/
 
 	bpf_for(i, 0, nr_cpu_ids) {
 		s32 cpu = (nr_timers + i) % nr_cpu_ids;
@@ -286,7 +290,7 @@ static int central_timerfn(void *map, int *key, struct bpf_timer *timer)
 		scx_bpf_kick_cpu(cpu, SCX_KICK_PREEMPT);
 	}
 
-	bpf_timer_start(timer, TIMER_INTERVAL_NS, BPF_F_TIMER_CPU_PIN);
+	bpf_timer_start(timer, TIMER_INTERVAL_NS, 0 /*BPF_F_TIMER_CPU_PIN*/);
 	__sync_fetch_and_add(&nr_timers, 1);
 	return 0;
 }
@@ -313,7 +317,7 @@ int BPF_STRUCT_OPS_SLEEPABLE(central_init)
 
 	bpf_timer_init(timer, &central_timer, CLOCK_MONOTONIC);
 	bpf_timer_set_callback(timer, central_timerfn);
-	ret = bpf_timer_start(timer, TIMER_INTERVAL_NS, BPF_F_TIMER_CPU_PIN);
+	ret = bpf_timer_start(timer, TIMER_INTERVAL_NS, 0 /*BPF_F_TIMER_CPU_PIN*/);
 	return ret;
 }
 

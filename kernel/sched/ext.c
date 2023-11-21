@@ -2436,7 +2436,7 @@ static void switching_to_scx(struct rq *rq, struct task_struct *p)
 				 (struct cpumask *)p->cpus_ptr);
 }
 
-static void wakeup_preempt_scx(struct rq *rq, struct task_struct *p,int wake_flags) {}
+static void check_preempt_curr_scx(struct rq *rq, struct task_struct *p,int wake_flags) {}
 static void switched_to_scx(struct rq *rq, struct task_struct *p) {}
 
 int scx_check_setscheduler(struct task_struct *p, int policy)
@@ -2634,9 +2634,10 @@ static inline void scx_cgroup_unlock(void) {}
 /*
  * Omitted operations:
  *
- * - wakeup_preempt: NOOP as it isn't useful in the wakeup path because the task
- *   isn't tied to the CPU at that point. Preemption is implemented by resetting
- *   the victim task's slice to 0 and triggering reschedule on the target CPU.
+ * - check_preempt_curr: NOOP as it isn't useful in the wakeup path because the
+ *   task isn't tied to the CPU at that point. Preemption is implemented by
+ *   resetting the victim task's slice to 0 and triggering reschedule on the
+ *   target CPU.
  *
  * - migrate_task_rq: Unncessary as task to cpu mapping is transient.
  *
@@ -2651,7 +2652,7 @@ DEFINE_SCHED_CLASS(ext) = {
 	.yield_task		= yield_task_scx,
 	.yield_to_task		= yield_to_task_scx,
 
-	.wakeup_preempt		= wakeup_preempt_scx,
+	.check_preempt_curr	= check_preempt_curr_scx,
 
 	.pick_next_task		= pick_next_task_scx,
 
