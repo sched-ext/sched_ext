@@ -102,7 +102,7 @@ struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
 	__uint(key_size, sizeof(u32));
 	__uint(value_size, sizeof(u64));
-	__uint(max_entries, NR_STATS);
+	__uint(max_entries, NEST_STAT(NR));
 } stats SEC(".maps");
 
 
