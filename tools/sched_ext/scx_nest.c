@@ -14,6 +14,8 @@
 #include "scx_common.h"
 #include "scx_nest.h"
 
+#define SAMPLING_CADENCE_S 2
+
 const char help_fmt[] =
 "A Nest sched_ext scheduler.\n"
 "\n"
@@ -71,11 +73,20 @@ static void read_stats(struct scx_nest *skel, u64 *stats)
 	}
 }
 
+static void print_underline(const char *str)
+{
+	char buf[64];
+	size_t len;
+
+	len = strlen(str);
+	memset(buf, '-', len);
+	buf[len] = '\0';
+	printf("\n\n%s\n%s\n", str, buf);
+}
+
 static void print_stat_grp(enum nest_stat_group grp)
 {
 	const char *group;
-	char buf[64];
-	size_t len;
 
 	switch (grp) {
 		case STAT_GRP_WAKEUP:
@@ -92,10 +103,43 @@ static void print_stat_grp(enum nest_stat_group grp)
 			break;
 	}
 
-	len = strlen(group);
-	memset(buf, '-', len);
-	buf[len] = '\0';
-	printf("\n\n%s\n%s\n", group, buf);
+	print_underline(group);
+}
+
+static void print_active_nests(const struct scx_nest *skel)
+{
+	u64 primary = skel->bss->stats_primary_mask;
+	u64 reserved = skel->bss->stats_reserved_mask;
+	u64 other = skel->bss->stats_other_mask;
+	u32 nr_cpus = skel->rodata->nr_cpus, cpu;
+	int idx;
+
+	print_underline("Masks");
+	for (idx = 0; idx < 3; idx++) {
+		const char *mask_str;
+		u64 mask, total = 0;
+		char cpus[nr_cpus + 1];
+
+		memset(cpus, '-', nr_cpus);
+		cpus[nr_cpus + 1] = '\0';
+		if (idx == 0) {
+			mask_str = "PRIMARY";
+			mask = primary;
+		} else if (idx == 1) {
+			mask_str = "RESERVED";
+			mask = reserved;
+		} else {
+			mask_str = "OTHER";
+			mask = other;
+		}
+		for (cpu = 0; cpu < nr_cpus; cpu++) {
+			if (mask & (1ULL << cpu)) {
+				cpus[cpu] = '*';
+				total++;
+			}
+		}
+		printf("%-9s(%2lu): | %s |\n", mask_str, total, cpus);
+	}
 }
 
 int main(int argc, char **argv)
@@ -113,6 +157,7 @@ int main(int argc, char **argv)
 	SCX_BUG_ON(!skel, "Failed to open skel");
 
 	skel->rodata->nr_cpus = libbpf_num_possible_cpus();
+	skel->rodata->sampling_cadence_ns = SAMPLING_CADENCE_S * 1000 * 1000 * 1000;
 
 	while ((opt = getopt(argc, argv, "hId:m:i:s:")) != -1) {
 		switch (opt) {
@@ -159,11 +204,12 @@ int main(int argc, char **argv)
 			printf("%s=%lu\n", nest_stat->label, stats[nest_stat->idx]);
 		}
 		printf("\n");
+		print_active_nests(skel);
 		printf("\n");
 		printf("\n");
 		printf("\n");
 		fflush(stdout);
-		sleep(2);
+		sleep(SAMPLING_CADENCE_S);
 	}
 
 	bpf_link__destroy(link);

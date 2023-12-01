@@ -36,6 +36,7 @@ enum {
 	NSEC_PER_USEC		= 1000LLU,
 	NSEC_PER_MSEC		= USEC_PER_MSEC * NSEC_PER_USEC,
 	USEC_PER_SEC		= USEC_PER_MSEC * MSEC_PER_SEC,
+	NSEC_PER_SEC		= NSEC_PER_USEC * USEC_PER_SEC,
 };
 
 #define CLOCK_BOOTTIME 7
@@ -46,8 +47,13 @@ const volatile u64 r_max = 5;
 const volatile u64 r_impatient = 2;
 const volatile u64 slice_ns = SCX_SLICE_DFL;
 const volatile bool find_fully_idle = false;
+const volatile u64 sampling_cadence_ns = 1 * NSEC_PER_SEC;
 
-s32 nr_reserved, nr_primary;
+// Used for stats tracking. May be stale at any given time.
+u64 stats_primary_mask, stats_reserved_mask, stats_other_mask;
+
+// Used for internal tracking.
+static s32 nr_reserved;
 
 static u64 vtime_now;
 struct user_exit_info uei;
@@ -95,6 +101,17 @@ struct {
 	__type(key, s32);
 	__type(value, struct pcpu_ctx);
 } pcpu_ctxs SEC(".maps");
+
+struct stats_timer {
+	struct bpf_timer timer;
+};
+
+struct {
+	__uint(type, BPF_MAP_TYPE_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, u32);
+	__type(value, struct stats_timer);
+} stats_timer SEC(".maps");
 
 const volatile u32 nr_cpus = 1; /* !0 for veristat, set during init. */
 
@@ -457,11 +474,48 @@ static int compact_primary_core(void *map, int *key, struct bpf_timer *timer)
 	return 0;
 }
 
+static int stats_timerfn(void *map, int *key, struct bpf_timer *timer)
+{
+	s32 cpu;
+	struct bpf_cpumask *primary, *reserve;
+	stats_primary_mask = 0;
+	stats_reserved_mask = 0;
+	stats_other_mask = 0;
+	long err;
+
+	bpf_rcu_read_lock();
+	primary = primary_cpumask;
+	reserve = reserve_cpumask;
+	if (!primary || !reserve) {
+		bpf_rcu_read_unlock();
+		scx_bpf_error("Failed to lookup primary or reserve");
+		return 0;
+	}
+
+	bpf_for(cpu, 0, nr_cpus) {
+		if (bpf_cpumask_test_cpu(cpu, cast_mask(primary)))
+			stats_primary_mask |= (1ULL << cpu);
+		else if (bpf_cpumask_test_cpu(cpu, cast_mask(reserve)))
+			stats_reserved_mask |= (1ULL << cpu);
+		else
+			stats_other_mask |= (1ULL << cpu);
+	}
+	bpf_rcu_read_unlock();
+
+	err = bpf_timer_start(timer, sampling_cadence_ns - 5000, 0);
+	if (err)
+		scx_bpf_error("Failed to arm stats timer");
+
+	return 0;
+}
+
 s32 BPF_STRUCT_OPS_SLEEPABLE(nest_init)
 {
 	struct bpf_cpumask *cpumask;
 	s32 cpu;
 	int err;
+	struct bpf_timer *timer;
+	u32 key = 0;
 
 	scx_bpf_switch_all();
 
@@ -504,7 +558,18 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(nest_init)
 		bpf_timer_set_callback(&ctx->timer, compact_primary_core);
 	}
 
-	return 0;
+	timer = bpf_map_lookup_elem(&stats_timer, &key);
+	if (!timer) {
+		scx_bpf_error("Failed to lookup central timer");
+		return -ESRCH;
+	}
+	bpf_timer_init(timer, &stats_timer, CLOCK_BOOTTIME);
+	bpf_timer_set_callback(timer, stats_timerfn);
+	err = bpf_timer_start(timer, sampling_cadence_ns - 5000, 0);
+	if (err)
+		scx_bpf_error("Failed to arm stats timer");
+
+	return err;
 }
 
 void BPF_STRUCT_OPS(nest_exit, struct scx_exit_info *ei)
