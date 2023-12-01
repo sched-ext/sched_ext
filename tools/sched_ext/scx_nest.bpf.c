@@ -50,7 +50,7 @@ const volatile bool find_fully_idle = false;
 const volatile u64 sampling_cadence_ns = 1 * NSEC_PER_SEC;
 
 // Used for stats tracking. May be stale at any given time.
-u64 stats_primary_mask, stats_reserved_mask, stats_other_mask;
+u64 stats_primary_mask, stats_reserved_mask, stats_other_mask, stats_idle_mask;
 
 // Used for internal tracking.
 static s32 nr_reserved;
@@ -448,6 +448,7 @@ static int compact_primary_core(void *map, int *key, struct bpf_timer *timer)
 	s32 cpu = bpf_get_smp_processor_id();
 	struct pcpu_ctx *pcpu_ctx;
 
+	stat_inc(NEST_STAT(COMPACTED));
 	/*
 	 * If we made it to this callback, it means that the timer callback was
 	 * never cancelled, and so the core needs to be demoted from the
@@ -478,9 +479,11 @@ static int stats_timerfn(void *map, int *key, struct bpf_timer *timer)
 {
 	s32 cpu;
 	struct bpf_cpumask *primary, *reserve;
+	const struct cpumask *idle;
 	stats_primary_mask = 0;
 	stats_reserved_mask = 0;
 	stats_other_mask = 0;
+	stats_idle_mask = 0;
 	long err;
 
 	bpf_rcu_read_lock();
@@ -492,6 +495,7 @@ static int stats_timerfn(void *map, int *key, struct bpf_timer *timer)
 		return 0;
 	}
 
+	idle = scx_bpf_get_idle_cpumask();
 	bpf_for(cpu, 0, nr_cpus) {
 		if (bpf_cpumask_test_cpu(cpu, cast_mask(primary)))
 			stats_primary_mask |= (1ULL << cpu);
@@ -499,8 +503,12 @@ static int stats_timerfn(void *map, int *key, struct bpf_timer *timer)
 			stats_reserved_mask |= (1ULL << cpu);
 		else
 			stats_other_mask |= (1ULL << cpu);
+
+		if (bpf_cpumask_test_cpu(cpu, idle))
+			stats_idle_mask |= (1ULL << cpu);
 	}
 	bpf_rcu_read_unlock();
+	scx_bpf_put_idle_cpumask(idle);
 
 	err = bpf_timer_start(timer, sampling_cadence_ns - 5000, 0);
 	if (err)
