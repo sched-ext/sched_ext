@@ -27,6 +27,7 @@ const char help_fmt[] =
 "  -m R_MAX      Maximum number of cores in the reserve nest (default 5)\n"
 "  -i ITERS      Number of successive placement failures tolerated before trying to aggressively expand primary nest (default 2), or 0 to disable\n"
 "  -s SLICE_US   Override slice duration in us (default 20000us / 20ms)\n"
+"  -D R_DECAY    Override the depth of work before which a core will be decayed\n"
 "  -I            First try to find a fully idle core, and then any idle core, when searching nests. Default behavior is to ignore hypertwins and check for any idle core.\n"
 "  -h            Display this help and exit\n";
 
@@ -163,10 +164,13 @@ int main(int argc, char **argv)
 	skel->rodata->nr_cpus = libbpf_num_possible_cpus();
 	skel->rodata->sampling_cadence_ns = SAMPLING_CADENCE_S * 1000 * 1000 * 1000;
 
-	while ((opt = getopt(argc, argv, "hId:m:i:s:")) != -1) {
+	while ((opt = getopt(argc, argv, "hId:D:m:i:s:")) != -1) {
 		switch (opt) {
 		case 'd':
 			skel->rodata->p_remove_ns = strtoull(optarg, NULL, 0) * 1000;
+			break;
+		case 'D':
+			skel->rodata->r_depth = strtoull(optarg, NULL, 0);
 			break;
 		case 'm':
 			skel->rodata->r_max = strtoull(optarg, NULL, 0);

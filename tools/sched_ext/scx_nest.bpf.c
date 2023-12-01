@@ -27,6 +27,8 @@
 #include "vmlinux.h"
 #include "scx_nest.h"
 
+#define TASK_DEAD                       0x00000080
+
 char _license[] SEC("license") = "GPL";
 
 enum {
@@ -48,6 +50,7 @@ const volatile u64 r_impatient = 2;
 const volatile u64 slice_ns = SCX_SLICE_DFL;
 const volatile bool find_fully_idle = false;
 const volatile u64 sampling_cadence_ns = 1 * NSEC_PER_SEC;
+const volatile u64 r_depth = 6;
 
 // Used for stats tracking. May be stale at any given time.
 u64 stats_primary_mask, stats_reserved_mask, stats_other_mask, stats_idle_mask;
@@ -107,6 +110,9 @@ struct pcpu_ctx {
 
 	/* Whether the current core has been scheduled for compaction. */
 	bool scheduled_compaction;
+
+	/* Number of tasks active on the core. */
+	u32 num_active;
 };
 
 struct {
@@ -218,6 +224,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 
 	// Unset below if we can't find a core to migrate to.
 	tctx->force_local = true;
+	tctx->prev_cpu = prev_cpu;
 
 	bpf_cpumask_and(p_mask, p->cpus_ptr, cast_mask(primary));
 
@@ -324,7 +331,6 @@ search_reserved:
 
 	bpf_rcu_read_unlock();
 	tctx->force_local = false;
-	tctx->prev_cpu = prev_cpu;
 	return prev_cpu;
 
 promote_to_primary:
@@ -366,6 +372,8 @@ void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 {
 	struct task_ctx *tctx;
 	u64 vtime = p->scx.dsq_vtime;
+	s32 cpu = bpf_get_smp_processor_id();
+	struct pcpu_ctx *pcpu_ctx;
 
 	tctx = bpf_task_storage_get(&task_ctx_stor, p, 0, 0);
 	if (!tctx) {
@@ -373,9 +381,17 @@ void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
-	if (tctx->force_local) {
+	if (tctx->force_local || (enq_flags & SCX_ENQ_LOCAL)) {
 		tctx->force_local = false;
+		if (enq_flags & SCX_ENQ_LOCAL)
+			update_attached(tctx, tctx->prev_cpu, cpu);
+
 		scx_bpf_dispatch(p, SCX_DSQ_LOCAL, slice_ns, enq_flags);
+		pcpu_ctx = bpf_map_lookup_elem(&pcpu_ctxs, &cpu);
+		if (!pcpu_ctx)
+			scx_bpf_error("Failed to lookup pcpu ctx");
+		else
+			pcpu_ctx->num_active++;
 		return;
 	}
 
@@ -393,13 +409,14 @@ void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 void BPF_STRUCT_OPS(nest_dispatch, s32 cpu, struct task_struct *prev)
 {
 	struct pcpu_ctx *pcpu_ctx;
-	struct bpf_cpumask *primary;
+	struct bpf_cpumask *primary, *reserve;
 	s32 key = cpu;
 	bool in_primary;
 
 	primary = primary_cpumask;
-	if (!primary) {
-		scx_bpf_error("No primary cpumask");
+	reserve = reserve_cpumask;
+	if (!primary || !reserve) {
+		scx_bpf_error("No primary or reserve cpumask");
 		return;
 	}
 
@@ -410,21 +427,41 @@ void BPF_STRUCT_OPS(nest_dispatch, s32 cpu, struct task_struct *prev)
 	}
 	in_primary = bpf_cpumask_test_cpu(cpu, cast_mask(primary));
 	if (!scx_bpf_consume(FALLBACK_DSQ_ID)) {
+		if (prev && (prev->scx.flags & SCX_TASK_QUEUED) && in_primary) {
+			pcpu_ctx->num_active++;
+			scx_bpf_dispatch(prev, SCX_DSQ_LOCAL, slice_ns, 0);
+			return;
+		}
+
 		stat_inc(NEST_STAT(NOT_CONSUMED));
 		if (in_primary) {
-			pcpu_ctx->scheduled_compaction = true;
 			/*
-			 * The core isn't being used anymore. Set a timer to
-			 * remove the core from the nest in p_remove if it's
-			 * still unused by that point.
+			 * Always immediately demote a primary core if we
+			 * couldn't consume, and the previous task is dying.
 			 */
-			bpf_timer_start(&pcpu_ctx->timer, p_remove_ns,
-					BPF_F_TIMER_CPU_PIN);
-			stat_inc(NEST_STAT(SCHEDULED_COMPACTION));
+			if (bpf_cpumask_first(cast_mask(primary)) != cpu &&
+			    (pcpu_ctx->num_active < r_depth || (prev && prev->__state == TASK_DEAD))) {
+				stat_inc(NEST_STAT(COMPACTED));
+				bpf_cpumask_clear_cpu(cpu, primary);
+				try_make_core_reserved(cpu, reserve, false);
+			} else  {
+				pcpu_ctx->scheduled_compaction = true;
+				/*
+				 * The core isn't being used anymore. Set a
+				 * timer to remove the core from the nest in
+				 * p_remove if it's still unused by that point.
+				 */
+				bpf_timer_start(&pcpu_ctx->timer, p_remove_ns,
+						BPF_F_TIMER_CPU_PIN);
+				stat_inc(NEST_STAT(SCHEDULED_COMPACTION));
+			}
+			pcpu_ctx->num_active = 0;
 		}
 		return;
 	}
 	stat_inc(NEST_STAT(CONSUMED));
+	if (in_primary)
+		pcpu_ctx->num_active++;
 }
 
 void BPF_STRUCT_OPS(nest_running, struct task_struct *p)
@@ -601,6 +638,7 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(nest_init)
 			scx_bpf_error("Failed to initialize pcpu timer");
 			return -EINVAL;
 		}
+		ctx->num_active  = 0;
 		bpf_timer_set_callback(&ctx->timer, compact_primary_core);
 	}
 
@@ -634,5 +672,6 @@ struct sched_ext_ops nest_ops = {
 	.enable			= (void *)nest_enable,
 	.init			= (void *)nest_init,
 	.exit			= (void *)nest_exit,
+	.flags			= 0,
 	.name			= "nest",
 };
