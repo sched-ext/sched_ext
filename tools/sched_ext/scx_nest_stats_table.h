@@ -10,6 +10,8 @@ NEST_ST(PROMOTED_TO_PRIMARY, STAT_GRP_NEST, "A core was promoted into the primar
 NEST_ST(PROMOTED_TO_RESERVED, STAT_GRP_NEST, "A core was promoted into the reserve nest")
 NEST_ST(DEMOTED_TO_RESERVED, STAT_GRP_NEST, "A core was demoted into the reserve nest")
 NEST_ST(RESERVED_AT_CAPACITY, STAT_GRP_NEST, "Reserved nest was at capacity")
+NEST_ST(SCHEDULED_COMPACTION, STAT_GRP_NEST, "Scheduled a primary core to be compacted")
+NEST_ST(CANCELLED_COMPACTION, STAT_GRP_NEST, "Cancelled a primary core from being compacted at task wakeup time")
 
 NEST_ST(CONSUMED, STAT_GRP_CONSUME, "A task was consumed from the global DSQ")
 NEST_ST(NOT_CONSUMED, STAT_GRP_CONSUME, "There was no task in the global DSQ")
