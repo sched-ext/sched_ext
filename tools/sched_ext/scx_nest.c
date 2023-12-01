@@ -111,26 +111,30 @@ static void print_active_nests(const struct scx_nest *skel)
 	u64 primary = skel->bss->stats_primary_mask;
 	u64 reserved = skel->bss->stats_reserved_mask;
 	u64 other = skel->bss->stats_other_mask;
+	u64 idle = skel->bss->stats_idle_mask;
 	u32 nr_cpus = skel->rodata->nr_cpus, cpu;
 	int idx;
+	char cpus[nr_cpus + 1];
 
+	memset(cpus, 0, nr_cpus + 1);
 	print_underline("Masks");
-	for (idx = 0; idx < 3; idx++) {
+	for (idx = 0; idx < 4; idx++) {
 		const char *mask_str;
 		u64 mask, total = 0;
-		char cpus[nr_cpus + 1];
 
 		memset(cpus, '-', nr_cpus);
-		cpus[nr_cpus + 1] = '\0';
 		if (idx == 0) {
 			mask_str = "PRIMARY";
 			mask = primary;
 		} else if (idx == 1) {
 			mask_str = "RESERVED";
 			mask = reserved;
-		} else {
+		} else if (idx == 2) {
 			mask_str = "OTHER";
 			mask = other;
+		} else {
+			mask_str = "IDLE";
+			mask = idle;
 		}
 		for (cpu = 0; cpu < nr_cpus; cpu++) {
 			if (mask & (1ULL << cpu)) {
