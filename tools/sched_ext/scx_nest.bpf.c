@@ -47,7 +47,7 @@ const volatile u64 r_impatient = 2;
 const volatile u64 slice_ns = SCX_SLICE_DFL;
 const volatile bool find_fully_idle = false;
 
-static s32 nr_reserved;
+s32 nr_reserved, nr_primary;
 
 static u64 vtime_now;
 struct user_exit_info uei;
@@ -177,11 +177,9 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 		   u64 wake_flags)
 {
 	struct bpf_cpumask *p_mask, *primary, *reserve;
-	const struct cpumask *idle_smtmask;
 	s32 cpu;
 	struct task_ctx *tctx;
 	struct pcpu_ctx *pcpu_ctx;
-	bool prev_in_primary;
 	bool direct_to_primary = false;
 
 	tctx = bpf_task_storage_get(&task_ctx_stor, p, 0, 0);
@@ -201,13 +199,11 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 	tctx->force_local = true;
 
 	bpf_cpumask_and(p_mask, p->cpus_ptr, cast_mask(primary));
-	prev_in_primary = bpf_cpumask_test_cpu(prev_cpu, cast_mask(p_mask));
-
 	/*
 	 * First try to stay on current core if it's in the primary set, and
 	 * there's no hypertwin.
 	 */
-	if (prev_in_primary &&
+	if (bpf_cpumask_test_cpu(prev_cpu, cast_mask(p_mask)) &&
 	    scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
 		cpu = prev_cpu;
 		tctx->prev_misses = 0;
@@ -217,6 +213,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 
 	if (r_impatient > 0 && ++tctx->prev_misses >= r_impatient) {
 		direct_to_primary = true;
+		tctx->prev_misses = 0;
 		stat_inc(NEST_STAT(TASK_IMPATIENT));
 		goto search_reserved;
 	}
@@ -234,7 +231,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 	/* Then try _any_ idle core in primary, even if its hypertwin is active. */
 	cpu = scx_bpf_pick_idle_cpu(cast_mask(p_mask), 0);
 	if (cpu >= 0) {
-		stat_inc(NEST_STAT(WAKEUP_HT_IDLE_PRIMARY));
+		stat_inc(NEST_STAT(WAKEUP_ANY_IDLE_PRIMARY));
 		goto migrate_primary;
 	}
 
@@ -253,7 +250,7 @@ search_reserved:
 	/* Then try _any_ idle core in reserve, even if its hypertwin is active. */
 	cpu = scx_bpf_pick_idle_cpu(cast_mask(p_mask), 0);
 	if (cpu >= 0) {
-		stat_inc(NEST_STAT(WAKEUP_HT_IDLE_RESERVE));
+		stat_inc(NEST_STAT(WAKEUP_ANY_IDLE_RESERVE));
 		goto promote_to_primary;
 	}
 

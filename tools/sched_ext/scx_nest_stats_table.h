@@ -1,8 +1,8 @@
 NEST_ST(WAKEUP_PREV_PRIMARY, STAT_GRP_WAKEUP, "Previous CPU was idle, and in primary nest")
 NEST_ST(WAKEUP_FULLY_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to fully idle primary nest core")
-NEST_ST(WAKEUP_HT_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to idle logical primary nest core")
+NEST_ST(WAKEUP_ANY_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to idle logical primary nest core")
 NEST_ST(WAKEUP_FULLY_IDLE_RESERVE, STAT_GRP_WAKEUP, "Woken up to fully idle reserve nest core")
-NEST_ST(WAKEUP_HT_IDLE_RESERVE, STAT_GRP_WAKEUP, "Woken up to idle logical reserve nest core")
+NEST_ST(WAKEUP_ANY_IDLE_RESERVE, STAT_GRP_WAKEUP, "Woken up to idle logical reserve nest core")
 NEST_ST(WAKEUP_IDLE_OTHER, STAT_GRP_WAKEUP, "Woken to any idle logical core in p->cpus_ptr")
 
 NEST_ST(TASK_IMPATIENT, STAT_GRP_NEST, "A task was found to be impatient")
