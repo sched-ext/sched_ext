@@ -27,6 +27,8 @@
 #include "vmlinux.h"
 #include "scx_nest.h"
 
+#define TASK_DEAD                       0x00000080
+
 char _license[] SEC("license") = "GPL";
 
 enum {
@@ -194,6 +196,14 @@ static void update_attached(struct task_ctx *tctx, s32 prev_cpu, s32 new_cpu)
 	tctx->prev_cpu = prev_cpu;
 }
 
+static void print_task_state(const struct task_struct *p, s32 cpu, const char *str)
+{
+	/*
+	bpf_printk("%s (%d): allowed %d, got %s %d", p->comm, p->pid,
+		   p->nr_cpus_allowed, str, cpu);
+		   */
+}
+
 s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 		   u64 wake_flags)
 {
@@ -218,6 +228,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 
 	// Unset below if we can't find a core to migrate to.
 	tctx->force_local = true;
+	tctx->prev_cpu = prev_cpu;
 
 	bpf_cpumask_and(p_mask, p->cpus_ptr, cast_mask(primary));
 
@@ -227,6 +238,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 		cpu = tctx->attached_core;
 		tctx->prev_misses = 0;
 		stat_inc(NEST_STAT(WAKEUP_ATTACHED));
+		print_task_state(p, cpu, "attached");
 		goto migrate_primary;
 	}
 
@@ -241,6 +253,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 		cpu = prev_cpu;
 		tctx->prev_misses = 0;
 		stat_inc(NEST_STAT(WAKEUP_PREV_PRIMARY));
+		print_task_state(p, cpu, "prev");
 		goto migrate_primary;
 	}
 
@@ -264,6 +277,7 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 	/* Then try _any_ idle core in primary, even if its hypertwin is active. */
 	cpu = scx_bpf_pick_idle_cpu(cast_mask(p_mask), 0);
 	if (cpu >= 0) {
+		print_task_state(p, cpu, "any primary");
 		stat_inc(NEST_STAT(WAKEUP_ANY_IDLE_PRIMARY));
 		goto migrate_primary;
 	}
@@ -284,6 +298,7 @@ search_reserved:
 	cpu = scx_bpf_pick_idle_cpu(cast_mask(p_mask), 0);
 	if (cpu >= 0) {
 		stat_inc(NEST_STAT(WAKEUP_ANY_IDLE_RESERVE));
+		print_task_state(p, cpu, "any reserved");
 		goto promote_to_primary;
 	}
 
@@ -319,12 +334,12 @@ search_reserved:
 		else
 			try_make_core_reserved(cpu, reserve, true);
 		bpf_rcu_read_unlock();
+		print_task_state(p, cpu, "any other");
 		return cpu;
 	}
 
 	bpf_rcu_read_unlock();
 	tctx->force_local = false;
-	tctx->prev_cpu = prev_cpu;
 	return prev_cpu;
 
 promote_to_primary:
@@ -366,6 +381,7 @@ void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 {
 	struct task_ctx *tctx;
 	u64 vtime = p->scx.dsq_vtime;
+	s32 cpu = bpf_get_smp_processor_id();
 
 	tctx = bpf_task_storage_get(&task_ctx_stor, p, 0, 0);
 	if (!tctx) {
@@ -373,8 +389,11 @@ void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 		return;
 	}
 
-	if (tctx->force_local) {
+	if (tctx->force_local || (enq_flags & SCX_ENQ_LOCAL)) {
 		tctx->force_local = false;
+		if (enq_flags & SCX_ENQ_LOCAL)
+			update_attached(tctx, tctx->prev_cpu, cpu);
+
 		scx_bpf_dispatch(p, SCX_DSQ_LOCAL, slice_ns, enq_flags);
 		return;
 	}
@@ -393,13 +412,14 @@ void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 void BPF_STRUCT_OPS(nest_dispatch, s32 cpu, struct task_struct *prev)
 {
 	struct pcpu_ctx *pcpu_ctx;
-	struct bpf_cpumask *primary;
+	struct bpf_cpumask *primary, *reserve;
 	s32 key = cpu;
 	bool in_primary;
 
 	primary = primary_cpumask;
-	if (!primary) {
-		scx_bpf_error("No primary cpumask");
+	reserve = reserve_cpumask;
+	if (!primary || !reserve) {
+		scx_bpf_error("No primary or reserve cpumask");
 		return;
 	}
 
@@ -412,15 +432,33 @@ void BPF_STRUCT_OPS(nest_dispatch, s32 cpu, struct task_struct *prev)
 	if (!scx_bpf_consume(FALLBACK_DSQ_ID)) {
 		stat_inc(NEST_STAT(NOT_CONSUMED));
 		if (in_primary) {
-			pcpu_ctx->scheduled_compaction = true;
 			/*
-			 * The core isn't being used anymore. Set a timer to
-			 * remove the core from the nest in p_remove if it's
-			 * still unused by that point.
-			 */
-			bpf_timer_start(&pcpu_ctx->timer, p_remove_ns,
-					BPF_F_TIMER_CPU_PIN);
-			stat_inc(NEST_STAT(SCHEDULED_COMPACTION));
+			if (prev == NULL) {
+				scx_bpf_error("NULL task!");
+				return;
+			}
+			*/
+			if (prev->__state == TASK_DEAD) {
+				stat_inc(NEST_STAT(COMPACTED));
+				bpf_cpumask_clear_cpu(cpu, primary);
+				try_make_core_reserved(cpu, reserve, false);
+			} else {
+				if (p_remove_ns > 0) {
+					pcpu_ctx->scheduled_compaction = true;
+					/*
+					 * The core isn't being used anymore. Set a timer to
+					 * remove the core from the nest in p_remove if it's
+					 * still unused by that point.
+					 */
+					bpf_timer_start(&pcpu_ctx->timer, p_remove_ns,
+							BPF_F_TIMER_CPU_PIN);
+					stat_inc(NEST_STAT(SCHEDULED_COMPACTION));
+				} else {
+					stat_inc(NEST_STAT(COMPACTED));
+					bpf_cpumask_clear_cpu(cpu, primary);
+					try_make_core_reserved(cpu, reserve, false);
+				}
+			}
 		}
 		return;
 	}
@@ -634,5 +672,6 @@ struct sched_ext_ops nest_ops = {
 	.enable			= (void *)nest_enable,
 	.init			= (void *)nest_init,
 	.exit			= (void *)nest_exit,
+	.flags			= SCX_OPS_ENQ_LAST,
 	.name			= "nest",
 };
