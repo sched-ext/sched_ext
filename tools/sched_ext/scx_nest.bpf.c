@@ -76,6 +76,20 @@ struct task_ctx {
 	 */
 	u32 prev_misses;
 
+	/*
+	 * A core that the task is "attached" to, meaning the last core that it
+	 * executed on at least twice in a row, and the core that it first
+	 * tries to migrate to on wakeup. The task only migrates to the
+	 * attached core if it is idle and in the primary nest.
+	 */
+	s32 attached_core;
+
+	/*
+	 * The last core that the task executed on. This is used to determine
+	 * if the task should attach to the core that it will execute on next.
+	 */
+	s32 prev_cpu;
+
 	/* Dispatch directly to local_dsq */
 	bool force_local;
 };
@@ -173,6 +187,13 @@ try_make_core_reserved(s32 cpu, struct bpf_cpumask * reserved, bool promotion)
 	}
 }
 
+static void update_attached(struct task_ctx *tctx, s32 prev_cpu, s32 new_cpu)
+{
+	if (tctx->prev_cpu == new_cpu)
+		tctx->attached_core = new_cpu;
+	tctx->prev_cpu = prev_cpu;
+}
+
 s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 		   u64 wake_flags)
 {
@@ -199,11 +220,23 @@ s32 BPF_STRUCT_OPS(nest_select_cpu, struct task_struct *p, s32 prev_cpu,
 	tctx->force_local = true;
 
 	bpf_cpumask_and(p_mask, p->cpus_ptr, cast_mask(primary));
+
+	/* First try to wake the task on its attached core. */
+	if (bpf_cpumask_test_cpu(tctx->attached_core, cast_mask(p_mask)) &&
+	    scx_bpf_test_and_clear_cpu_idle(tctx->attached_core)) {
+		cpu = tctx->attached_core;
+		tctx->prev_misses = 0;
+		stat_inc(NEST_STAT(WAKEUP_ATTACHED));
+		goto migrate_primary;
+	}
+
 	/*
-	 * First try to stay on current core if it's in the primary set, and
-	 * there's no hypertwin.
+	 * Try to stay on the previous core if it's in the primary set, and
+	 * there's no hypertwin. If the previous core is the core the task is
+	 * attached to, don't bother as we already just tried that above.
 	 */
-	if (bpf_cpumask_test_cpu(prev_cpu, cast_mask(p_mask)) &&
+	if (prev_cpu != tctx->attached_core &&
+	    bpf_cpumask_test_cpu(prev_cpu, cast_mask(p_mask)) &&
 	    scx_bpf_test_and_clear_cpu_idle(prev_cpu)) {
 		cpu = prev_cpu;
 		tctx->prev_misses = 0;
@@ -291,6 +324,7 @@ search_reserved:
 
 	bpf_rcu_read_unlock();
 	tctx->force_local = false;
+	tctx->prev_cpu = prev_cpu;
 	return prev_cpu;
 
 promote_to_primary:
@@ -324,6 +358,7 @@ migrate_primary:
 		bpf_cpumask_clear_cpu(cpu, reserve);
 	}
 	bpf_rcu_read_unlock();
+	update_attached(tctx, prev_cpu, cpu);
 	return cpu;
 }
 
@@ -432,6 +467,9 @@ s32 BPF_STRUCT_OPS(nest_prep_enable, struct task_struct *p,
 	cpumask = bpf_kptr_xchg(&tctx->tmp_mask, cpumask);
 	if (cpumask)
 		bpf_cpumask_release(cpumask);
+
+	tctx->attached_core = -1;
+	tctx->prev_cpu = -1;
 
 	return 0;
 }

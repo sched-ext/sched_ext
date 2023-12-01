@@ -1,3 +1,4 @@
+NEST_ST(WAKEUP_ATTACHED, STAT_GRP_WAKEUP, "Attached CPU was idle, and in primary nest")
 NEST_ST(WAKEUP_PREV_PRIMARY, STAT_GRP_WAKEUP, "Previous CPU was idle, and in primary nest")
 NEST_ST(WAKEUP_FULLY_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to fully idle primary nest core")
 NEST_ST(WAKEUP_ANY_IDLE_PRIMARY, STAT_GRP_WAKEUP, "Woken up to idle logical primary nest core")
