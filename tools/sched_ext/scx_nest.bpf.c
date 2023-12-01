@@ -72,9 +72,6 @@ struct task_ctx {
 
 	/* Dispatch directly to local_dsq */
 	bool force_local;
-
-	/* This task promoted a core to the primary nest. */
-	bool promoted;
 };
 
 struct {
@@ -85,7 +82,7 @@ struct {
 } task_ctx_stor SEC(".maps");
 
 struct pcpu_ctx {
-	u64 touched;
+	/* The timer used to compact the core from the primary nest. */
 	struct bpf_timer timer;
 };
 
@@ -116,21 +113,6 @@ static __attribute__((always_inline)) void stat_inc(u32 idx)
 		(*cnt_p)++;
 }
 
-static u64 jiffies_to_usecs(u64 jiffies)
-{
-	return jiffies * (USEC_PER_SEC / CONFIG_HZ);
-}
-
-static u64 jiffies_to_nsecs(u64 jiffies)
-{
-	return jiffies_to_usecs(jiffies) * NSEC_PER_USEC;
-}
-
-static u64 curr_ns(void)
-{
-	return jiffies_to_nsecs(bpf_jiffies64());
-}
-
 static inline bool vtime_before(u64 a, u64 b)
 {
 	return (s64)(a - b) < 0;
@@ -154,21 +136,19 @@ try_make_core_reserved(s32 cpu, struct bpf_cpumask * reserved, bool promotion)
 	 */
 	tmp_nr_reserved = nr_reserved;
 	if (tmp_nr_reserved < r_max) {
-		if (__sync_bool_compare_and_swap(&nr_reserved,
-					tmp_nr_reserved,
-					tmp_nr_reserved + 1)) {
-			bpf_cpumask_set_cpu(cpu, reserved);
-			if (promotion)
-				stat_inc(NEST_STAT(PROMOTED_TO_RESERVED));
-			else
-				stat_inc(NEST_STAT(DEMOTED_TO_RESERVED));
-		} else {
-			if (promotion)
-				stat_inc(NEST_STAT(PROMOTE_RESERVE_CONTENDED));
-			else
-				stat_inc(NEST_STAT(DEMOTE_RESERVE_CONTENDED));
-		}
+		/*
+		 * It's possible that we could exceed r_max for a time here,
+		 * but that should balance out as more cores are either demoted
+		 * or fail to be promoted into the reserve nest.
+		 */
+		__sync_fetch_and_add(&nr_reserved, 1);
+		bpf_cpumask_set_cpu(cpu, reserved);
+		if (promotion)
+			stat_inc(NEST_STAT(PROMOTED_TO_RESERVED));
+		else
+			stat_inc(NEST_STAT(DEMOTED_TO_RESERVED));
 	} else {
+		bpf_cpumask_clear_cpu(cpu, reserved);
 		stat_inc(NEST_STAT(RESERVED_AT_CAPACITY));
 	}
 }
@@ -258,19 +238,33 @@ search_reserved:
 	cpu = scx_bpf_pick_idle_cpu(p->cpus_ptr, 0);
 	if (cpu >= 0) {
 		/*
-		 * Try to promote the current core to reserved. Do one extra
-		 * double check that it's not in the primary or reserved
-		 * cpumask before moving it into reserved, as we could
-		 * potentially race with checking primary and reserve above.
+		 * We found a core that (we didn't _think_) is in any nest.
+		 * This means that we need to either promote the core to the
+		 * reserve nest, or if we're going direct to primary due to
+		 * r_impatient being exceeded, promote directly to primary.
+		 *
+		 * We have to do one final check here to see if the core is in
+		 * the primary or reserved cpumask because we could potentially
+		 * race with the core changing states between AND'ing the
+		 * primary and reserve masks with p->cpus_ptr above, and
+		 * atomically reserving it from the idle mask with
+		 * scx_bpf_pick_idle_cpu(). This is also technically true of
+		 * the checks above, but in all of those cases we just put the
+		 * core directly into the primary mask so it's not really that
+		 * big of a problem. Here, we want to make sure that we don't
+		 * accidentally put a core into the reserve nest that was e.g.
+		 * already in the primary nest. This is unlikely, but we check
+		 * for it on what should be a relatively cold path regardless.
 		 */
 		stat_inc(NEST_STAT(WAKEUP_IDLE_OTHER));
-		if (!bpf_cpumask_test_cpu(cpu, cast_mask(primary)) &&
-		    !bpf_cpumask_test_cpu(cpu, cast_mask(reserve))) {
-			if (direct_to_primary)
-				goto promote_to_primary;
-			else
-				try_make_core_reserved(cpu, reserve, true);
-		}
+		if (bpf_cpumask_test_cpu(cpu, cast_mask(primary)))
+			goto migrate_primary;
+		else if (bpf_cpumask_test_cpu(cpu, cast_mask(reserve)))
+			goto promote_to_primary;
+		else if (direct_to_primary)
+			goto promote_to_primary;
+		else
+			try_make_core_reserved(cpu, reserve, true);
 		bpf_rcu_read_unlock();
 		return cpu;
 	}
@@ -280,27 +274,31 @@ search_reserved:
 	return prev_cpu;
 
 promote_to_primary:
+	stat_inc(NEST_STAT(PROMOTED_TO_PRIMARY));
+migrate_primary:
+	pcpu_ctx = bpf_map_lookup_elem(&pcpu_ctxs, &cpu);
+	if (pcpu_ctx) {
+		if (bpf_timer_cancel(&pcpu_ctx->timer) < 0)
+			scx_bpf_error("Failed to cancel pcpu timer");
+	} else {
+		scx_bpf_error("Failed to lookup pcpu ctx");
+	}
 	bpf_cpumask_set_cpu(cpu, primary);
 	/*
-	 * Do one final check to make sure the CPU is still in reserved, as
-	 * someone else could have theoretically come in, used it, and promoted
-	 * it to primary between our initial primary check, and when we
-	 * eventually are able to reserve it from the ext.c idle mask.
+	 * Check to see whether the CPU is in the reserved nest. This can
+	 * happen if the core is compacted concurrently with us trying to place
+	 * the currently-waking task onto it. Similarly, this is the expected
+	 * state of the core if we found the core in the reserve nest and are
+	 * promoting it.
+	 *
+	 * We don't have to worry about racing with any other waking task here
+	 * because we've atomically reserved the core with (some variant of)
+	 * scx_bpf_pick_idle_cpu().
 	 */
-	tctx->promoted = true;
 	if (bpf_cpumask_test_cpu(cpu, cast_mask(reserve))) {
 		__sync_sub_and_fetch(&nr_reserved, 1);
 		bpf_cpumask_clear_cpu(cpu, reserve);
 	}
-	stat_inc(NEST_STAT(PROMOTED_TO_PRIMARY));
-migrate_primary:
-	pcpu_ctx = bpf_map_lookup_elem(&pcpu_ctxs, &cpu);
-	if (pcpu_ctx)
-		pcpu_ctx->touched = curr_ns();
-	else
-		scx_bpf_error("Failed to lookup pcpu ctx");
-	if (!tctx->promoted)
-		stat_inc(NEST_STAT(RENEWED_IN_PRIMARY));
 	bpf_rcu_read_unlock();
 	return cpu;
 }
@@ -308,30 +306,12 @@ migrate_primary:
 void BPF_STRUCT_OPS(nest_enqueue, struct task_struct *p, u64 enq_flags)
 {
 	struct task_ctx *tctx;
-	struct pcpu_ctx *pcpu_ctx;
 	u64 vtime = p->scx.dsq_vtime;
-	s32 cpu;
 
 	tctx = bpf_task_storage_get(&task_ctx_stor, p, 0, 0);
 	if (!tctx) {
 		scx_bpf_error("Unable to find task ctx");
 		return;
-	}
-
-	if (tctx->promoted) {
-		cpu = bpf_get_smp_processor_id();
-		pcpu_ctx = bpf_map_lookup_elem(&pcpu_ctxs, &cpu);
-		if (!pcpu_ctx) {
-			scx_bpf_error("Unable to find pcpu_ctx");
-			return;
-		}
-		/*
-		 * The core is still primary. Don't remove it, and schedule
-		 * another timer to check in timeout + 1us.
-		 */
-		bpf_timer_start(&pcpu_ctx->timer, p_remove_ns + 1000,
-				BPF_F_TIMER_CPU_PIN);
-		tctx->promoted = false;
 	}
 
 	if (tctx->force_local) {
@@ -356,32 +336,43 @@ void BPF_STRUCT_OPS(nest_dispatch, s32 cpu, struct task_struct *prev)
 	struct pcpu_ctx *pcpu_ctx;
 	struct bpf_cpumask *primary;
 	s32 key = cpu;
+	bool in_primary;
 
-	if (!scx_bpf_consume(FALLBACK_DSQ_ID)) {
-		stat_inc(NEST_STAT(NOT_CONSUMED));
-		return;
-	}
-
-	stat_inc(NEST_STAT(CONSUMED));
 	primary = primary_cpumask;
 	if (!primary) {
 		scx_bpf_error("No primary cpumask");
 		return;
 	}
 
-	/*
-	 * If we're in the primary nest, signal that we were able to find a
-	 * task to run by resetting last touched.
-	 */
-	if (bpf_cpumask_test_cpu(cpu, cast_mask(primary))) {
-		pcpu_ctx = bpf_map_lookup_elem(&pcpu_ctxs, &key);
-		if (pcpu_ctx) {
-			pcpu_ctx->touched = curr_ns();
-			stat_inc(NEST_STAT(RENEWED_IN_PRIMARY));
-		} else {
-			scx_bpf_error("Failed to lookup pcpu ctx");
-		}
+	pcpu_ctx = bpf_map_lookup_elem(&pcpu_ctxs, &key);
+	if (!pcpu_ctx) {
+		scx_bpf_error("Failed to lookup pcpu ctx");
+		return;
 	}
+	in_primary = bpf_cpumask_test_cpu(cpu, cast_mask(primary));
+	if (!scx_bpf_consume(FALLBACK_DSQ_ID)) {
+		stat_inc(NEST_STAT(NOT_CONSUMED));
+		if (in_primary) {
+			/*
+			 * The core isn't being used anymore. Set a timer to
+			 * remove the core from the nest in p_remove if it's
+			 * still unused by that point.
+			 */
+			bpf_timer_start(&pcpu_ctx->timer, p_remove_ns,
+					BPF_F_TIMER_CPU_PIN);
+		}
+		return;
+	}
+
+	stat_inc(NEST_STAT(CONSUMED));
+	/*
+	 * If it's in the primary nest, cancel its timer callback as it's still
+	 * being used. We don't need to worry about racing with the timer
+	 * callback as it's pinned to the current CPU, and interrupts are
+	 * disabled.
+	 */
+	if (in_primary && bpf_timer_cancel(&pcpu_ctx->timer) < 0)
+		scx_bpf_error("Failed to cancel pcpu timer");
 }
 
 void BPF_STRUCT_OPS(nest_running, struct task_struct *p)
@@ -434,53 +425,28 @@ void BPF_STRUCT_OPS(nest_enable, struct task_struct *p,
 	p->scx.dsq_vtime = vtime_now;
 }
 
-static int check_primary_remove(void *map, int *key, struct bpf_timer *timer)
+static int compact_primary_core(void *map, int *key, struct bpf_timer *timer)
 {
-	u64 curr, delta;
-	struct pcpu_ctx *pcpu_ctx;
 	struct bpf_cpumask *primary, *reserve;
 	s32 cpu = bpf_get_smp_processor_id();
 
-	pcpu_ctx = bpf_map_lookup_elem(map, key);
-	if (!pcpu_ctx) {
-		scx_bpf_error("Couldn't find pcpu ctx");
-		return 0;
-	}
-
-	curr = curr_ns();
-	if (curr < pcpu_ctx->touched) {
-		scx_bpf_error("Time moved backwards (curr %llu, touched %llu)",
-			      curr, pcpu_ctx->touched);
-		return 0;
-	}
-
-	delta = curr - pcpu_ctx->touched;
-	if (delta >= p_remove_ns) {
-		/*
-		 * It's time to demote the core. Remove it from the primary
-		 * cpumask and don't schedule another timer.
-		 */
-		bpf_rcu_read_lock();
-		primary = primary_cpumask;
-		reserve = reserve_cpumask;
-		if (!primary || !reserve) {
-			scx_bpf_error("Couldn't find primary or reserve");
-			bpf_rcu_read_unlock();
-			return 0;
-		}
-
-		bpf_cpumask_clear_cpu(cpu, primary);
-		try_make_core_reserved(cpu, reserve, false);
+	/*
+	 * If we made it to this callback, it means that the timer callback was
+	 * never cancelled, and so the core needs to be demoted from the
+	 * primary nest.
+	 */
+	bpf_rcu_read_lock();
+	primary = primary_cpumask;
+	reserve = reserve_cpumask;
+	if (!primary || !reserve) {
+		scx_bpf_error("Couldn't find primary or reserve");
 		bpf_rcu_read_unlock();
-	} else {
-		/*
-		 * The core is still primary. Don't remove it, and schedule
-		 * another timer to check in timeout + 1us.
-		 */
-		bpf_timer_start(&pcpu_ctx->timer, p_remove_ns + 1000,
-				BPF_F_TIMER_CPU_PIN);
+		return 0;
 	}
 
+	bpf_cpumask_clear_cpu(cpu, primary);
+	try_make_core_reserved(cpu, reserve, false);
+	bpf_rcu_read_unlock();
 	return 0;
 }
 
@@ -523,12 +489,11 @@ s32 BPF_STRUCT_OPS_SLEEPABLE(nest_init)
 			scx_bpf_error("Failed to lookup pcpu_ctx");
 			return -ENOENT;
 		}
-		ctx->touched = 0;
 		if (bpf_timer_init(&ctx->timer, &pcpu_ctxs, CLOCK_BOOTTIME)) {
 			scx_bpf_error("Failed to initialize pcpu timer");
 			return -EINVAL;
 		}
-		bpf_timer_set_callback(&ctx->timer, check_primary_remove);
+		bpf_timer_set_callback(&ctx->timer, compact_primary_core);
 	}
 
 	return 0;
