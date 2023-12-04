@@ -11,7 +11,7 @@
 #include <bpf/bpf.h>
 #include "user_exit_info.h"
 #include "scx_nest.bpf.skel.h"
-#include "scx_common.h"
+#include <scx/common.h>
 #include "scx_nest.h"
 
 #define SAMPLING_CADENCE_S 2

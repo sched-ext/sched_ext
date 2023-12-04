@@ -23,7 +23,7 @@
  * Copyright (c) 2023 David Vernet <dvernet@meta.com>
  * Copyright (c) 2023 Tejun Heo <tj@kernel.org>
  */
-#include "scx_common.bpf.h"
+#include <scx/common.bpf.h>
 #include "vmlinux.h"
 #include "scx_nest.h"
 
