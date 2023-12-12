@@ -142,6 +142,12 @@ static bool dispatch_to_cpu(s32 cpu)
 	s32 pid;
 
 	bpf_repeat(BPF_MAX_LOOPS) {
+		/* We might run out of dispatch buffer slots if we get too many cases of
+		 * tasks bouncing to the fallback DSQ, break if that happens.
+		 */
+		if (!scx_bpf_dispatch_nr_slots())
+			break;
+
 		if (bpf_map_pop_elem(&central_q, &pid))
 			break;
 
