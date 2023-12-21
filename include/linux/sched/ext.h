@@ -61,6 +61,7 @@ enum scx_exit_kind {
 
 	SCX_EXIT_UNREG = 64,	/* BPF unregistration */
 	SCX_EXIT_SYSRQ,		/* requested by 'S' sysrq */
+	SCX_EXIT_PM,		/* exit on PM events (e.g., suspend) */
 
 	SCX_EXIT_ERROR = 1024,	/* runtime error, error msg contains details */
 	SCX_EXIT_ERROR_BPF,	/* ERROR but triggered through scx_bpf_error() */
@@ -113,6 +114,18 @@ enum scx_ops_flags {
 	SCX_OPS_ENQ_EXITING	= 1LLU << 2,
 
 	/*
+	 * Some schedulers may rely on external user-space components. In
+	 * presence of a power-management event, such as suspend or hibernate,
+	 * the user-space components can be frozen, potentially preventing any
+	 * further progress of the scheduler.
+	 *
+	 * To address this issue, introduce the @SCX_OPS_PM_AUTO_EXIT flag,
+	 * which can be set to automatically disable the scheduler when any
+	 * power-management event occurs.
+	 */
+	SCX_OPS_PM_AUTO_EXIT	= 1LLU << 3,
+
+	/*
 	 * CPU cgroup knob enable flags
 	 */
 	SCX_OPS_CGROUP_KNOB_WEIGHT = 1LLU << 16,	/* cpu.weight */
@@ -120,6 +133,7 @@ enum scx_ops_flags {
 	SCX_OPS_ALL_FLAGS	= SCX_OPS_KEEP_BUILTIN_IDLE |
 				  SCX_OPS_ENQ_LAST |
 				  SCX_OPS_ENQ_EXITING |
+				  SCX_OPS_PM_AUTO_EXIT |
 				  SCX_OPS_CGROUP_KNOB_WEIGHT,
 };
 

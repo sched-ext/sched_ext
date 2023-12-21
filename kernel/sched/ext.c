@@ -8,6 +8,8 @@
  */
 #define SCX_OP_IDX(op)		(offsetof(struct sched_ext_ops, op) / sizeof(void (*)(void)))
 
+#include <linux/pm.h>
+
 enum scx_internal_consts {
 	SCX_NR_ONLINE_OPS	= SCX_OP_IDX(init),
 	SCX_DSP_DFL_MAX_BATCH	= 32,
@@ -2953,6 +2955,9 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 	case SCX_EXIT_SYSRQ:
 		reason = "disabled by sysrq-S";
 		break;
+	case SCX_EXIT_PM:
+		reason = "disabled on PM event";
+		break;
 	case SCX_EXIT_ERROR:
 		reason = "runtime error";
 		break;
@@ -3739,9 +3744,39 @@ void print_scx_info(const char *log_lvl, struct task_struct *p)
 	       runnable_at_buf);
 }
 
+static int
+scx_suspend_handler(struct notifier_block *nb, unsigned long event, void *ptr)
+{
+	if (!scx_enabled())
+		return NOTIFY_OK;
+
+	mutex_lock(&scx_ops_enable_mutex);
+
+	if (!scx_ops_helper || !(scx_ops.flags & SCX_OPS_PM_AUTO_EXIT))
+		goto out_unlock;
+
+	switch (event) {
+	case PM_SUSPEND_PREPARE:
+	case PM_HIBERNATION_PREPARE:
+	case PM_RESTORE_PREPARE:
+		pr_info("sched_ext: \"%s\" disabled on PM event\n",
+			scx_ops.name);
+		scx_ops_disable(SCX_EXIT_PM);
+		break;
+	}
+out_unlock:
+	mutex_unlock(&scx_ops_enable_mutex);
+
+	return NOTIFY_OK;
+}
+
+static struct notifier_block scx_suspend_notifier = {
+	.notifier_call = scx_suspend_handler,
+};
+
 void __init init_sched_ext_class(void)
 {
-	int cpu;
+	int cpu, ret;
 	u32 v;
 
 	/*
@@ -3779,6 +3814,10 @@ void __init init_sched_ext_class(void)
 	register_sysrq_key('S', &sysrq_sched_ext_reset_op);
 	INIT_DELAYED_WORK(&scx_watchdog_work, scx_watchdog_workfn);
 	scx_cgroup_config_knobs();
+
+	ret = register_pm_notifier(&scx_suspend_notifier);
+	if (ret)
+		pr_err("sched_ext: failed to register suspend notifier (%d)\n", ret);
 }
 
 
