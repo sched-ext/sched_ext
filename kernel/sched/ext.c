@@ -3253,7 +3253,7 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 	}
 
 	ei->kind = kind;
-	strlcpy(ei->reason, reason, sizeof(ei->reason));
+	strscpy_pad(ei->reason, reason, sizeof(ei->reason));
 
 	/* guarantee forward progress by bypassing scx_ops */
 	scx_ops_bypass(true);
