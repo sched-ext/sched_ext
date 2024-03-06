@@ -37,11 +37,26 @@ static void sigint_handler(int dummy)
 	exit_req = 1;
 }
 
+/*
+ * Miscompilation goes away if $v is initialized to zero or the later
+ * __COMPAT_SCX_OPS_SWITCH_PARTIAL usage is uncommented.
+ */
+static __attribute__((noinline)) void clang_miscompilation_repro(void)
+{
+	u64 v;
+	bool ret;
+
+	ret = __COMPAT_read_enum("NON-EXISTENT", "WHATEVER", &v);
+	printf("XXX __COMPAT_read_enum ret=%d v=%lx\n", ret, v);
+}
+
 int main(int argc, char **argv)
 {
 	struct scx_qmap *skel;
 	struct bpf_link *link;
 	int opt;
+
+	clang_miscompilation_repro();
 
 	signal(SIGINT, sigint_handler);
 	signal(SIGTERM, sigint_handler);
@@ -75,7 +90,7 @@ int main(int argc, char **argv)
 			break;
 		case 'p':
 			skel->rodata->switch_partial = true;
-			skel->struct_ops.qmap_ops->flags |= __COMPAT_SCX_OPS_SWITCH_PARTIAL;
+			//skel->struct_ops.qmap_ops->flags |= __COMPAT_SCX_OPS_SWITCH_PARTIAL;
 			break;
 		default:
 			fprintf(stderr, help_fmt, basename(argv[0]));
