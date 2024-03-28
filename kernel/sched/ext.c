@@ -2084,12 +2084,12 @@ static s32 scx_select_cpu_dfl(struct task_struct *p, s32 prev_cpu,
 	}
 
 	/*
-	 * If WAKE_SYNC and the machine isn't fully saturated, wake up @p to the
+	 * If WAKE_SYNC and the waker's local DSQ is empty, wake up @p to the
 	 * local DSQ of the waker.
 	 */
+	cpu = smp_processor_id();
 	if ((wake_flags & SCX_WAKE_SYNC) && p->nr_cpus_allowed > 1 &&
-	    !cpumask_empty(idle_masks.cpu) && !(current->flags & PF_EXITING)) {
-		cpu = smp_processor_id();
+	    cpu_rq(cpu)->scx.local_dsq.nr == 0 && !(current->flags & PF_EXITING)) {
 		if (cpumask_test_cpu(cpu, p->cpus_ptr))
 			goto cpu_found;
 	}
