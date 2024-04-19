@@ -1384,7 +1384,7 @@ static void dispatch_enqueue(struct scx_dispatch_q *dsq, struct task_struct *p,
 {
 	bool is_local = dsq->id == SCX_DSQ_LOCAL;
 
-	WARN_ON_ONCE(p->scx.dsq || !list_empty(&p->scx.dsq_node.fifo));
+	WARN_ON_ONCE(p->scx.dsq || !list_empty(&p->scx.dsq_node.list));
 	WARN_ON_ONCE((p->scx.dsq_flags & SCX_TASK_DSQ_ON_PRIQ) ||
 		     !RB_EMPTY_NODE(&p->scx.dsq_node.priq));
 
@@ -1417,14 +1417,14 @@ static void dispatch_enqueue(struct scx_dispatch_q *dsq, struct task_struct *p,
 		rb_add_cached(&p->scx.dsq_node.priq, &dsq->priq,
 			      scx_dsq_priq_less);
 		/* A DSQ should only be using either FIFO or PRIQ enqueuing. */
-		if (unlikely(!list_empty(&dsq->fifo)))
+		if (unlikely(!list_empty(&dsq->list)))
 			scx_ops_error("DSQ ID 0x%016llx already had FIFO-enqueued tasks",
 				      dsq->id);
 	} else {
 		if (enq_flags & (SCX_ENQ_HEAD | SCX_ENQ_PREEMPT))
-			list_add(&p->scx.dsq_node.fifo, &dsq->fifo);
+			list_add(&p->scx.dsq_node.list, &dsq->list);
 		else
-			list_add_tail(&p->scx.dsq_node.fifo, &dsq->fifo);
+			list_add_tail(&p->scx.dsq_node.list, &dsq->list);
 		/* A DSQ should only be using either FIFO or PRIQ enqueuing. */
 		if (unlikely(rb_first_cached(&dsq->priq)))
 			scx_ops_error("DSQ ID 0x%016llx already had PRIQ-enqueued tasks",
@@ -1475,13 +1475,13 @@ static void task_unlink_from_dsq(struct task_struct *p,
 		RB_CLEAR_NODE(&p->scx.dsq_node.priq);
 		p->scx.dsq_flags &= ~SCX_TASK_DSQ_ON_PRIQ;
 	} else {
-		list_del_init(&p->scx.dsq_node.fifo);
+		list_del_init(&p->scx.dsq_node.list);
 	}
 }
 
 static bool task_linked_on_dsq(struct task_struct *p)
 {
-	return !list_empty(&p->scx.dsq_node.fifo) ||
+	return !list_empty(&p->scx.dsq_node.list) ||
 		!RB_EMPTY_NODE(&p->scx.dsq_node.priq);
 }
 
@@ -2028,12 +2028,12 @@ static bool consume_dispatch_q(struct rq *rq, struct rq_flags *rf,
 	struct rq *task_rq;
 	bool moved = false;
 retry:
-	if (list_empty(&dsq->fifo) && !rb_first_cached(&dsq->priq))
+	if (list_empty(&dsq->list) && !rb_first_cached(&dsq->priq))
 		return false;
 
 	raw_spin_lock(&dsq->lock);
 
-	list_for_each_entry(p, &dsq->fifo, scx.dsq_node.fifo) {
+	list_for_each_entry(p, &dsq->list, scx.dsq_node.list) {
 		task_rq = task_rq(p);
 		if (rq == task_rq)
 			goto this_rq;
@@ -2058,7 +2058,7 @@ this_rq:
 	/* @dsq is locked and @p is on this rq */
 	WARN_ON_ONCE(p->scx.holding_cpu >= 0);
 	task_unlink_from_dsq(p, dsq);
-	list_add_tail(&p->scx.dsq_node.fifo, &scx_rq->local_dsq.fifo);
+	list_add_tail(&p->scx.dsq_node.list, &scx_rq->local_dsq.list);
 	dsq->nr--;
 	scx_rq->local_dsq.nr++;
 	p->scx.dsq = &scx_rq->local_dsq;
@@ -2584,7 +2584,7 @@ static void put_prev_task_scx(struct rq *rq, struct task_struct *p)
 		 * can find the task unless it wants to trigger a separate
 		 * follow-up scheduling event.
 		 */
-		if (list_empty(&rq->scx.local_dsq.fifo))
+		if (list_empty(&rq->scx.local_dsq.list))
 			do_enqueue_task(rq, p, SCX_ENQ_LAST, -1);
 		else
 			do_enqueue_task(rq, p, 0, -1);
@@ -2594,8 +2594,8 @@ static void put_prev_task_scx(struct rq *rq, struct task_struct *p)
 static struct task_struct *first_local_task(struct rq *rq)
 {
 	WARN_ON_ONCE(rb_first_cached(&rq->scx.local_dsq.priq));
-	return list_first_entry_or_null(&rq->scx.local_dsq.fifo,
-					struct task_struct, scx.dsq_node.fifo);
+	return list_first_entry_or_null(&rq->scx.local_dsq.list,
+					struct task_struct, scx.dsq_node.list);
 }
 
 static struct task_struct *pick_next_task_scx(struct rq *rq)
@@ -3669,7 +3669,7 @@ static void init_dsq(struct scx_dispatch_q *dsq, u64 dsq_id)
 	memset(dsq, 0, sizeof(*dsq));
 
 	raw_spin_lock_init(&dsq->lock);
-	INIT_LIST_HEAD(&dsq->fifo);
+	INIT_LIST_HEAD(&dsq->list);
 	dsq->id = dsq_id;
 }
 
