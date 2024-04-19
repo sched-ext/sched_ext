@@ -929,13 +929,6 @@ static __printf(3, 4) void scx_ops_exit_kind(enum scx_exit_kind kind,
 #define scx_ops_error(fmt, args...)						\
 	scx_ops_error_kind(SCX_EXIT_ERROR, fmt, ##args)
 
-struct scx_task_iter {
-	struct sched_ext_entity		cursor;
-	struct task_struct		*locked;
-	struct rq			*rq;
-	struct rq_flags			rf;
-};
-
 #define SCX_HAS_OP(op)	static_branch_likely(&scx_has_op[SCX_OP_IDX(op)])
 
 static long jiffies_delta_msecs(unsigned long at, unsigned long now)
@@ -1096,6 +1089,13 @@ static __always_inline bool scx_kf_allowed_on_arg_tasks(u32 mask,
 
 	return true;
 }
+
+struct scx_task_iter {
+	struct sched_ext_entity		cursor;
+	struct task_struct		*locked;
+	struct rq			*rq;
+	struct rq_flags			rf;
+};
 
 /**
  * scx_task_iter_init - Initialize a task iterator
@@ -1552,6 +1552,11 @@ static void dispatch_dequeue(struct scx_rq *scx_rq, struct task_struct *p)
 		raw_spin_unlock(&dsq->lock);
 }
 
+static struct scx_dispatch_q *find_user_dsq(u64 dsq_id)
+{
+	return rhashtable_lookup_fast(&dsq_hash, &dsq_id, dsq_hash_params);
+}
+
 static struct scx_dispatch_q *find_non_local_dsq(u64 dsq_id)
 {
 	lockdep_assert(rcu_read_lock_any_held());
@@ -1559,8 +1564,7 @@ static struct scx_dispatch_q *find_non_local_dsq(u64 dsq_id)
 	if (dsq_id == SCX_DSQ_GLOBAL)
 		return &scx_dsq_global;
 	else
-		return rhashtable_lookup_fast(&dsq_hash, &dsq_id,
-					      dsq_hash_params);
+		return find_user_dsq(dsq_id);
 }
 
 static struct scx_dispatch_q *find_dsq_for_dispatch(struct rq *rq, u64 dsq_id,
@@ -3723,7 +3727,7 @@ static void destroy_dsq(u64 dsq_id)
 
 	rcu_read_lock();
 
-	dsq = rhashtable_lookup_fast(&dsq_hash, &dsq_id, dsq_hash_params);
+	dsq = find_user_dsq(dsq_id);
 	if (!dsq)
 		goto out_unlock_rcu;
 
