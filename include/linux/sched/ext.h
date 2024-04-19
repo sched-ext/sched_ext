@@ -94,6 +94,8 @@ enum scx_task_state {
 /* scx_entity.dsq_flags */
 enum scx_ent_dsq_flags {
 	SCX_TASK_DSQ_ON_PRIQ	= 1 << 0, /* task is queued on the priority queue of a dsq */
+
+	SCX_TASK_DSQ_CURSOR	= 1 << 31, /* iteration cursor, not a task */
 };
 
 /*

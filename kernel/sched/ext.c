@@ -1111,15 +1111,17 @@ static struct task_struct *udsq_next_task(struct scx_dispatch_q *dsq,
 	else
 		list_node = &dsq->list;
 
-	if (rev)
-		list_node = list_node->prev;
-	else
-		list_node = list_node->next;
+	do {
+		if (rev)
+			list_node = list_node->prev;
+		else
+			list_node = list_node->next;
 
-	if (list_node == &dsq->list)
-		return NULL;
+		if (list_node == &dsq->list)
+			return NULL;
 
-	dsq_node = container_of(list_node, struct scx_dsq_node, list);
+		dsq_node = container_of(list_node, struct scx_dsq_node, list);
+	} while (dsq_node->flags & SCX_TASK_DSQ_CURSOR);
 
 	return container_of(dsq_node, struct task_struct, scx.dsq_node);
 }
@@ -5849,6 +5851,64 @@ __bpf_kfunc void scx_bpf_destroy_dsq(u64 dsq_id)
 	destroy_dsq(dsq_id);
 }
 
+struct scx_dsq_iter {
+	struct scx_dsq_node		cursor;
+	struct scx_dispatch_q		*dsq;
+	bool				rev;
+};
+
+__bpf_kfunc int scx_bpf_iter_dsq_new(struct scx_dsq_iter *it, u64 dsq_id,
+				     bool rev)
+{
+	INIT_LIST_HEAD(&it->cursor.list);
+	RB_CLEAR_NODE(&it->cursor.priq);
+	it->cursor.flags = SCX_TASK_DSQ_CURSOR;
+	it->dsq = find_user_dsq(dsq_id);
+	it->rev = rev;
+
+	return it->dsq ? 0 : -ENOENT;
+}
+
+__bpf_kfunc struct task_struct *scx_bpf_iter_dsq_next(struct scx_dsq_iter *it)
+{
+	struct task_struct *p;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&it->dsq->lock, flags);
+
+	if (list_empty(&it->cursor.list))
+		p = NULL;
+	else
+		p = container_of(&it->cursor, struct task_struct, scx.dsq_node);
+
+	p = udsq_next_task(it->dsq, p, it->rev);
+
+	if (p) {
+		if (it->rev)
+			list_move_tail(&it->cursor.list, &p->scx.dsq_node.list);
+		else
+			list_move(&it->cursor.list, &p->scx.dsq_node.list);
+	} else {
+		list_del_init(&it->cursor.list);
+	}
+
+	raw_spin_unlock_irqrestore(&it->dsq->lock, flags);
+
+	return p;
+}
+
+__bpf_kfunc void scx_bpf_iter_dsq_destroy(struct scx_dsq_iter *it)
+{
+	if (!list_empty(&it->cursor.list)) {
+		unsigned long flags;
+
+		raw_spin_lock_irqsave(&it->dsq->lock, flags);
+		list_del_init(&it->cursor.list);
+		raw_spin_unlock_irqrestore(&it->dsq->lock, flags);
+	}
+	it->dsq = NULL;
+}
+
 __bpf_kfunc_end_defs();
 
 struct scx_bpf_error_bstr_bufs {
@@ -6256,6 +6316,9 @@ BTF_KFUNCS_START(scx_kfunc_ids_any)
 BTF_ID_FLAGS(func, scx_bpf_kick_cpu)
 BTF_ID_FLAGS(func, scx_bpf_dsq_nr_queued)
 BTF_ID_FLAGS(func, scx_bpf_destroy_dsq)
+BTF_ID_FLAGS(func, scx_bpf_iter_dsq_new, KF_ITER_NEW | KF_RCU_PROTECTED)
+BTF_ID_FLAGS(func, scx_bpf_iter_dsq_next, KF_ITER_NEXT | KF_RET_NULL)
+BTF_ID_FLAGS(func, scx_bpf_iter_dsq_destroy, KF_ITER_DESTROY)
 BTF_ID_FLAGS(func, scx_bpf_exit_bstr, KF_TRUSTED_ARGS)
 BTF_ID_FLAGS(func, scx_bpf_error_bstr, KF_TRUSTED_ARGS)
 BTF_ID_FLAGS(func, scx_bpf_nr_cpu_ids)
