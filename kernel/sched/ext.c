@@ -5863,8 +5863,8 @@ __bpf_kfunc int scx_bpf_iter_dsq_new(struct scx_dsq_iter *it, u64 dsq_id,
 	INIT_LIST_HEAD(&it->cursor.list);
 	RB_CLEAR_NODE(&it->cursor.priq);
 	it->cursor.flags = SCX_TASK_DSQ_CURSOR;
-	it->dsq = find_user_dsq(dsq_id);
 	it->rev = rev;
+	it->dsq = find_user_dsq(dsq_id);
 
 	return it->dsq ? 0 : -ENOENT;
 }
