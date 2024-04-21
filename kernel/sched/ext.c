@@ -1148,6 +1148,12 @@ enum scx_dsq_iter_flags {
 };
 
 struct bpf_iter_scx_dsq_kern {
+	/*
+	 * Must be the first field. Used to work around BPF restriction and pass
+	 * in the iterator pointer to scx_bpf_consume_task().
+	 */
+	struct bpf_iter_scx_dsq_kern	*self;
+
 	struct scx_dsq_node		cursor;
 	struct scx_dispatch_q		*dsq;
 	u64				dsq_seq;
@@ -1155,7 +1161,10 @@ struct bpf_iter_scx_dsq_kern {
 } __attribute__((aligned(8)));
 
 struct bpf_iter_scx_dsq {
-	u64				__opaque[12];
+	/* must be the first field */
+	struct bpf_iter_scx_dsq		*self;
+
+	u64				__opaque[11];
 } __attribute__((aligned(8)));
 
 
@@ -1530,7 +1539,7 @@ static void dispatch_enqueue(struct scx_dispatch_q *dsq, struct task_struct *p,
 	p->scx.dsq_seq = dsq->seq;
 
 	dsq->nr++;
-	p->scx.dsq = dsq;
+	WRITE_ONCE(p->scx.dsq, dsq);
 
 	/*
 	 * scx.ddsp_dsq_id and scx.ddsp_enq_flags are only relevant on the
@@ -1623,7 +1632,7 @@ static void dispatch_dequeue(struct scx_rq *scx_rq, struct task_struct *p)
 		WARN_ON_ONCE(task_linked_on_dsq(p));
 		p->scx.holding_cpu = -1;
 	}
-	p->scx.dsq = NULL;
+	WRITE_ONCE(p->scx.dsq, NULL);
 
 	if (!is_local)
 		raw_spin_unlock(&dsq->lock);
@@ -2127,7 +2136,7 @@ static void consume_local_task(struct rq *rq, struct scx_dispatch_q *dsq,
 	list_add_tail(&p->scx.dsq_node.list, &scx_rq->local_dsq.list);
 	dsq->nr--;
 	scx_rq->local_dsq.nr++;
-	p->scx.dsq = &scx_rq->local_dsq;
+	WRITE_ONCE(p->scx.dsq, &scx_rq->local_dsq);
 	raw_spin_unlock(&dsq->lock);
 }
 
@@ -5725,12 +5734,82 @@ __bpf_kfunc bool scx_bpf_consume(u64 dsq_id)
 	}
 }
 
+/**
+ * __scx_bpf_consume_task - Transfer a task from DSQ iteration to the local DSQ
+ * @it: DSQ iterator in progress
+ * @p: task to consume
+ *
+ * Transfer @p which is on the DSQ currently iterated by @it to the current
+ * CPU's local DSQ. For the transfer to be successful, @p must still be on the
+ * DSQ and have been queued before the DSQ iteration started. This function
+ * doesn't care whether @p was obtained from the DSQ iteration. @p just has to
+ * be on the DSQ and have been queued before the iteration started.
+ *
+ * Returns %true if @p has been consumed, %false if @p had already been consumed
+ * or dequeued.
+ */
+__bpf_kfunc bool __scx_bpf_consume_task(unsigned long it, struct task_struct *p)
+{
+	struct bpf_iter_scx_dsq_kern *kit = (void *)it;
+	struct scx_dispatch_q *dsq, *kit_dsq;
+	struct scx_dsp_ctx *dspc = this_cpu_ptr(&scx_dsp_ctx);
+	struct rq *task_rq;
+	u64 kit_dsq_seq;
+
+	/* can't trust @kit, carefully fetch the values we need */
+	if (get_kernel_nofault(kit_dsq, &kit->dsq) ||
+	    get_kernel_nofault(kit_dsq_seq, &kit->dsq_seq)) {
+		scx_ops_error("invalid @it 0x%lx", it);
+		return false;
+	}
+
+	/*
+	 * @kit can't be trusted and we can only get the DSQ from @p. As we
+	 * don't know @p's rq is locked, use READ_ONCE() to access the field.
+	 * Derefing is safe as DSQs are RCU protected.
+	 */
+	dsq = READ_ONCE(p->scx.dsq);
+	if (!dsq || dsq != kit_dsq)
+		return false;
+
+	if (!scx_kf_allowed(SCX_KF_DISPATCH))
+		return false;
+
+	flush_dispatch_buf(dspc->rq, dspc->rf);
+
+	raw_spin_lock(&dsq->lock);
+
+	/*
+	 * Did someone else get to it? @p could have already left $dsq, got
+	 * re-enqueud, or be in the process of being consumed by someone else.
+	 */
+	if (unlikely(p->scx.dsq != dsq ||
+		     time_after64(p->scx.dsq_seq, kit_dsq_seq) ||
+		     p->scx.holding_cpu >= 0))
+		goto out_unlock;
+
+	task_rq = task_rq(p);
+
+	if (dspc->rq == task_rq) {
+		consume_local_task(dspc->rq, dsq, p);
+		return true;
+	}
+
+	if (task_can_run_on_remote_rq(p, dspc->rq))
+		return consume_remote_task(dspc->rq, dspc->rf, dsq, p, task_rq);
+
+out_unlock:
+	raw_spin_unlock(&dsq->lock);
+	return false;
+}
+
 __bpf_kfunc_end_defs();
 
 BTF_KFUNCS_START(scx_kfunc_ids_dispatch)
 BTF_ID_FLAGS(func, scx_bpf_dispatch_nr_slots)
 BTF_ID_FLAGS(func, scx_bpf_dispatch_cancel)
 BTF_ID_FLAGS(func, scx_bpf_consume)
+BTF_ID_FLAGS(func, __scx_bpf_consume_task)
 BTF_KFUNCS_END(scx_kfunc_ids_dispatch)
 
 static const struct btf_kfunc_id_set scx_kfunc_set_dispatch = {
@@ -5928,6 +6007,8 @@ __bpf_kfunc int bpf_iter_scx_dsq_new(struct bpf_iter_scx_dsq *it, u64 dsq_id,
 		     sizeof(struct bpf_iter_scx_dsq));
 	BUILD_BUG_ON(__alignof__(struct bpf_iter_scx_dsq_kern) !=
 		     __alignof__(struct bpf_iter_scx_dsq));
+	BUILD_BUG_ON(offsetof(struct bpf_iter_scx_dsq_kern, self) !=
+		     offsetof(struct bpf_iter_scx_dsq, self));
 
 	if (flags & ~__SCX_DSQ_ITER_ALL_FLAGS)
 		return -EINVAL;
@@ -5939,6 +6020,7 @@ __bpf_kfunc int bpf_iter_scx_dsq_new(struct bpf_iter_scx_dsq *it, u64 dsq_id,
 	INIT_LIST_HEAD(&kit->cursor.list);
 	RB_CLEAR_NODE(&kit->cursor.priq);
 	kit->cursor.flags = SCX_TASK_DSQ_CURSOR;
+	kit->self = kit;
 	kit->dsq_seq = kit->dsq->seq;
 	kit->flags = flags;
 
