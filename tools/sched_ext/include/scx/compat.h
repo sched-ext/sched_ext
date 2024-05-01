@@ -126,7 +126,8 @@ static inline bool __COMPAT_struct_has_field(const char *type, const char *field
  * and attach it, backward compatibility is automatically maintained where
  * reasonable.
  *
- * - sched_ext_ops.tick(): Ignored on older kernels with a warning.
+ * - ops.tick(): Ignored on older kernels with a warning.
+ * - ops.exit_dump_len: Cleared to zero on older kernels with a warning.
  */
 #define SCX_OPS_OPEN(__ops_name, __scx_name) ({					\
 	struct __scx_name *__skel;						\
@@ -136,7 +137,13 @@ static inline bool __COMPAT_struct_has_field(const char *type, const char *field
 	__skel; 								\
 })
 
-#define SCX_OPS_LOAD(__skel, __ops_name, __scx_name) ({				\
+#define SCX_OPS_LOAD(__skel, __ops_name, __scx_name, __uei_name) ({		\
+	UEI_SET_SIZE(__skel, __ops_name, __uei_name);				\
+	if (!__COMPAT_struct_has_field("sched_ext_ops", "exit_dump_len") &&	\
+	    (__skel)->struct_ops.__ops_name->exit_dump_len) {			\
+		fprintf(stderr, "WARNING: kernel doesn't support setting exit dump len\n"); \
+		(__skel)->struct_ops.__ops_name->exit_dump_len = 0;		\
+	}									\
 	if (!__COMPAT_struct_has_field("sched_ext_ops", "tick") &&		\
 	    (__skel)->struct_ops.__ops_name->tick) {				\
 		fprintf(stderr, "WARNING: kernel doesn't support ops.tick()\n"); \

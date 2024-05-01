@@ -12,6 +12,7 @@ enum scx_consts {
 
 	SCX_EXIT_BT_LEN			= 64,
 	SCX_EXIT_MSG_LEN		= 1024,
+	SCX_EXIT_DUMP_DFL_LEN		= 32768,
 };
 
 enum scx_exit_kind {
@@ -48,6 +49,9 @@ struct scx_exit_info {
 
 	/* informational message */
 	char			*msg;
+
+	/* debug dump */
+	char			*dump;
 };
 
 /* sched_ext_ops.flags */
@@ -329,6 +333,12 @@ struct sched_ext_ops {
 	 * Defaults to the maximum allowed timeout value of 30 seconds.
 	 */
 	u32 timeout_ms;
+
+	/**
+	 * exit_dump_len - scx_exit_info.dump buffer length. If 0, the default
+	 * value of 32768 is used.
+	 */
+	u32 exit_dump_len;
 
 	/**
 	 * name - BPF scheduler's name
@@ -2888,12 +2898,13 @@ out_unlock:
 
 static void free_exit_info(struct scx_exit_info *ei)
 {
+	kfree(ei->dump);
 	kfree(ei->msg);
 	kfree(ei->bt);
 	kfree(ei);
 }
 
-static struct scx_exit_info *alloc_exit_info(void)
+static struct scx_exit_info *alloc_exit_info(size_t exit_dump_len)
 {
 	struct scx_exit_info *ei;
 
@@ -2903,8 +2914,9 @@ static struct scx_exit_info *alloc_exit_info(void)
 
 	ei->bt = kcalloc(sizeof(ei->bt[0]), SCX_EXIT_BT_LEN, GFP_KERNEL);
 	ei->msg = kzalloc(SCX_EXIT_MSG_LEN, GFP_KERNEL);
+	ei->dump = kzalloc(exit_dump_len, GFP_KERNEL);
 
-	if (!ei->bt || !ei->msg) {
+	if (!ei->bt || !ei->msg || !ei->dump) {
 		free_exit_info(ei);
 		return NULL;
 	}
@@ -3104,8 +3116,101 @@ static void scx_ops_disable(enum scx_exit_kind kind)
 	schedule_scx_ops_disable_work();
 }
 
+static void scx_dump_task(struct seq_buf *s, struct task_struct *p, char marker,
+			  unsigned long now)
+{
+	static unsigned long bt[SCX_EXIT_BT_LEN];
+	char dsq_id_buf[19] = "(n/a)";
+	unsigned long ops_state = atomic_long_read(&p->scx.ops_state);
+	unsigned int bt_len;
+	size_t avail, used;
+	char *buf;
+
+	if (p->scx.dsq)
+		scnprintf(dsq_id_buf, sizeof(dsq_id_buf), "0x%llx",
+			  (unsigned long long)p->scx.dsq->id);
+
+	seq_buf_printf(s, "\n %c%c %s[%d] %+ldms\n",
+		       marker, task_state_to_char(p), p->comm, p->pid,
+		       jiffies_delta_msecs(p->scx.runnable_at, now));
+	seq_buf_printf(s, "      scx_state/flags=%u/0x%x ops_state/qseq=%lu/%lu\n",
+		       scx_get_task_state(p),
+		       p->scx.flags & ~SCX_TASK_STATE_MASK,
+		       ops_state & SCX_OPSS_STATE_MASK,
+		       ops_state >> SCX_OPSS_QSEQ_SHIFT);
+	seq_buf_printf(s, "      sticky/holding_cpu=%d/%d dsq_id=%s\n",
+		       p->scx.sticky_cpu, p->scx.holding_cpu, dsq_id_buf);
+	seq_buf_printf(s, "      cpus=%*pb\n\n", cpumask_pr_args(p->cpus_ptr));
+
+	bt_len = stack_trace_save_tsk(p, bt, SCX_EXIT_BT_LEN, 1);
+
+	avail = seq_buf_get_buf(s, &buf);
+	used = stack_trace_snprint(buf, avail, bt, bt_len, 3);
+	seq_buf_commit(s, used < avail ? used : -1);
+}
+
+static void scx_dump_state(struct scx_exit_info *ei, size_t dump_len)
+{
+	const char trunc_marker[] = "\n\n~~~~ TRUNCATED ~~~~\n";
+	unsigned long now = jiffies;
+	struct seq_buf s;
+	size_t avail, used;
+	char *buf;
+	int cpu;
+
+	if (dump_len <= sizeof(trunc_marker))
+		return;
+
+	seq_buf_init(&s, ei->dump, dump_len - sizeof(trunc_marker));
+
+	seq_buf_printf(&s, "%s[%d] triggered exit kind %d:\n  %s (%s)\n\n",
+		       current->comm, current->pid, ei->kind, ei->reason, ei->msg);
+	seq_buf_printf(&s, "Backtrace:\n");
+	avail = seq_buf_get_buf(&s, &buf);
+	used = stack_trace_snprint(buf, avail, ei->bt, ei->bt_len, 1);
+	seq_buf_commit(&s, used < avail ? used : -1);
+
+	seq_buf_printf(&s, "\nRunqueue states\n");
+	seq_buf_printf(&s, "---------------\n");
+
+	for_each_possible_cpu(cpu) {
+		struct rq *rq = cpu_rq(cpu);
+		struct rq_flags rf;
+		struct task_struct *p;
+
+		rq_lock(rq, &rf);
+
+		if (list_empty(&rq->scx.runnable_list) &&
+		    rq->curr->sched_class == &idle_sched_class)
+			goto next;
+
+		seq_buf_printf(&s, "\nCPU %-4d: nr_run=%u ops_qseq=%lu\n",
+			       cpu, rq->scx.nr_running, rq->scx.ops_qseq);
+		seq_buf_printf(&s, "          curr=%s[%d] class=%ps\n",
+			       rq->curr->comm, rq->curr->pid,
+			       rq->curr->sched_class);
+
+		if (rq->curr->sched_class == &ext_sched_class)
+			scx_dump_task(&s, rq->curr, '*', now);
+
+		list_for_each_entry(p, &rq->scx.runnable_list, scx.runnable_node)
+			scx_dump_task(&s, p, ' ', now);
+	next:
+		rq_unlock(rq, &rf);
+	}
+
+	if (seq_buf_has_overflowed(&s))
+		memcpy(ei->dump + seq_buf_used(&s) - 1, trunc_marker,
+		       sizeof(trunc_marker));
+}
+
 static void scx_ops_error_irq_workfn(struct irq_work *irq_work)
 {
+	struct scx_exit_info *ei = scx_exit_info;
+
+	if (ei->kind >= SCX_EXIT_ERROR)
+		scx_dump_state(ei, scx_ops.exit_dump_len);
+
 	schedule_scx_ops_disable_work();
 }
 
@@ -3130,6 +3235,13 @@ static __printf(3, 4) void scx_ops_exit_kind(enum scx_exit_kind kind,
 	va_start(args, fmt);
 	vscnprintf(ei->msg, SCX_EXIT_MSG_LEN, fmt, args);
 	va_end(args);
+
+	/*
+	 * Set ei->kind and ->reason for scx_dump_state(). They'll be set again
+	 * in scx_ops_disable_workfn().
+	 */
+	ei->kind = kind;
+	ei->reason = scx_exit_reason(ei->kind);
 
 	irq_work_queue(&scx_ops_error_irq_work);
 }
@@ -3192,7 +3304,7 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 	if (ret < 0)
 		goto err;
 
-	scx_exit_info = alloc_exit_info();
+	scx_exit_info = alloc_exit_info(ops->exit_dump_len);
 	if (!scx_exit_info) {
 		ret = -ENOMEM;
 		goto err_del;
@@ -3571,6 +3683,10 @@ static int bpf_scx_init_member(const struct btf_type *t,
 		    SCX_WATCHDOG_MAX_TIMEOUT)
 			return -E2BIG;
 		ops->timeout_ms = *(u32 *)(udata + moff);
+		return 1;
+	case offsetof(struct sched_ext_ops, exit_dump_len):
+		ops->exit_dump_len =
+			*(u32 *)(udata + moff) ?: SCX_EXIT_DUMP_DFL_LEN;
 		return 1;
 	}
 
