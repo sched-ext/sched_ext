@@ -123,6 +123,12 @@ static inline bool __COMPAT_struct_has_field(const char *type, const char *field
 #define __COMPAT_HAS_CPUMASKS							\
 	__COMPAT_has_ksym("scx_bpf_nr_cpu_ids")
 
+/*
+ * DSQ iterator is new. Users will be able to assume existence in the future.
+ */
+#define __COMPAT_HAS_DSQ_ITER							\
+	__COMPAT_has_ksym("bpf_iter_scx_dsq_new")
+
 static inline long scx_hotplug_seq(void)
 {
 	int fd;

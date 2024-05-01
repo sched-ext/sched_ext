@@ -59,6 +59,7 @@ struct scx_dispatch_q {
 	struct list_head	list;	/* tasks in dispatch order */
 	struct rb_root		priq;	/* used to order by p->scx.dsq_vtime */
 	u32			nr;
+	u64			seq;	/* used by BPF iter */
 	u64			id;
 	struct rhash_head	hash_node;
 	struct llist_node	free_node;
@@ -92,6 +93,8 @@ enum scx_task_state {
 /* scx_entity.dsq_flags */
 enum scx_ent_dsq_flags {
 	SCX_TASK_DSQ_ON_PRIQ	= 1 << 0, /* task is queued on the priority queue of a dsq */
+
+	SCX_TASK_DSQ_CURSOR	= 1 << 31, /* iteration cursor, not a task */
 };
 
 /*
@@ -132,6 +135,7 @@ struct scx_dsq_node {
 struct sched_ext_entity {
 	struct scx_dispatch_q	*dsq;
 	struct scx_dsq_node	dsq_node;	/* protected by dsq lock */
+	u64			dsq_seq;
 	u32			flags;		/* protected by rq lock */
 	u32			weight;
 	s32			sticky_cpu;
