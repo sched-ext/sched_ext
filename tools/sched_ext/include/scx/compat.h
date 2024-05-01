@@ -8,6 +8,9 @@
 #define __SCX_COMPAT_H
 
 #include <bpf/btf.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 struct btf *__COMPAT_vmlinux_btf __attribute__((weak));
 
@@ -120,6 +123,28 @@ static inline bool __COMPAT_struct_has_field(const char *type, const char *field
 #define __COMPAT_HAS_CPUMASKS							\
 	__COMPAT_has_ksym("scx_bpf_nr_cpu_ids")
 
+static inline long scx_hotplug_seq(void)
+{
+	int fd;
+	char buf[32];
+	ssize_t len;
+	long val;
+
+	fd = open("/sys/kernel/sched_ext/hotplug_seq", O_RDONLY);
+	if (fd < 0)
+		return -ENOENT;
+
+	len = read(fd, buf, sizeof(buf) - 1);
+	SCX_BUG_ON(len <= 0, "read failed (%ld)", len);
+	buf[len] = 0;
+	close(fd);
+
+	val = strtoul(buf, NULL, 10);
+	SCX_BUG_ON(val < 0, "invalid num hotplug events: %lu", val);
+
+	return val;
+}
+
 /*
  * struct sched_ext_ops can change over time. If compat.bpf.h::SCX_OPS_DEFINE()
  * is used to define ops and compat.h::SCX_OPS_LOAD/ATTACH() are used to load
@@ -128,12 +153,16 @@ static inline bool __COMPAT_struct_has_field(const char *type, const char *field
  *
  * - ops.tick(): Ignored on older kernels with a warning.
  * - ops.exit_dump_len: Cleared to zero on older kernels with a warning.
+ * - ops.hotplug_seq: Ignored on older kernels.
  */
 #define SCX_OPS_OPEN(__ops_name, __scx_name) ({					\
 	struct __scx_name *__skel;						\
 										\
 	__skel = __scx_name##__open();						\
 	SCX_BUG_ON(!__skel, "Could not open " #__scx_name);			\
+										\
+	if (__COMPAT_struct_has_field("sched_ext_ops", "hotplug_seq"))		\
+		__skel->struct_ops.__ops_name->hotplug_seq = scx_hotplug_seq();	\
 	__skel; 								\
 })
 
