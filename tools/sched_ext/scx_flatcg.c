@@ -26,10 +26,11 @@ const char help_fmt[] =
 "\n"
 "See the top-level comment in .bpf.c for more details.\n"
 "\n"
-"Usage: %s [-s SLICE_US] [-i INTERVAL] [-v]\n"
+"Usage: %s [-s SLICE_US] [-i INTERVAL] [-f] [-v]\n"
 "\n"
 "  -s SLICE_US   Override slice duration\n"
 "  -i INTERVAL   Report interval\n"
+"  -f            Use FIFO scheduling instead of weighted vtime scheduling\n"
 "  -v            Print libbpf debug messages\n"
 "  -h            Display this help and exit\n";
 
@@ -137,7 +138,7 @@ restart:
 
 	skel->rodata->nr_cpus = libbpf_num_possible_cpus();
 
-	while ((opt = getopt(argc, argv, "s:i:dvh")) != -1) {
+	while ((opt = getopt(argc, argv, "s:i:dfvh")) != -1) {
 		double v;
 
 		switch (opt) {
@@ -152,6 +153,9 @@ restart:
 			break;
 		case 'd':
 			dump_cgrps = true;
+			break;
+		case 'f':
+			skel->rodata->fifo_sched = true;
 			break;
 		case 'v':
 			verbose = true;
