@@ -72,6 +72,18 @@ struct {
 };
 
 /*
+ * If enabled, CPU performance target is set according to the queue index
+ * according to the following table.
+ */
+static const u32 qidx_to_cpuperf_target[] = {
+	[0] = SCX_CPUPERF_ONE * 0 / 4,
+	[1] = SCX_CPUPERF_ONE * 1 / 4,
+	[2] = SCX_CPUPERF_ONE * 2 / 4,
+	[3] = SCX_CPUPERF_ONE * 3 / 4,
+	[4] = SCX_CPUPERF_ONE * 4 / 4,
+};
+
+/*
  * Per-queue sequence numbers to implement core-sched ordering.
  *
  * Tail seq is assigned to each queued task and incremented. Head seq tracks the
@@ -98,6 +110,8 @@ struct {
 struct cpu_ctx {
 	u64	dsp_idx;	/* dispatch index */
 	u64	dsp_cnt;	/* remaining count */
+	u32	avg_weight;
+	u32	cpuperf_target;
 };
 
 struct {
@@ -110,6 +124,8 @@ struct {
 /* Statistics */
 u64 nr_enqueued, nr_dispatched, nr_reenqueued, nr_dequeued;
 u64 nr_core_sched_execed, nr_expedited;
+u32 cpuperf_min, cpuperf_avg, cpuperf_max;
+u32 cpuperf_target_min, cpuperf_target_avg, cpuperf_target_max;
 
 s32 BPF_STRUCT_OPS(qmap_select_cpu, struct task_struct *p,
 		   s32 prev_cpu, u64 wake_flags)
@@ -347,6 +363,29 @@ void BPF_STRUCT_OPS(qmap_dispatch, s32 cpu, struct task_struct *prev)
 	}
 }
 
+void BPF_STRUCT_OPS(qmap_tick, struct task_struct *p)
+{
+	struct cpu_ctx *cpuc;
+	u32 zero = 0;
+	int idx;
+
+	if (!(cpuc = bpf_map_lookup_elem(&cpu_ctx_stor, &zero))) {
+		scx_bpf_error("failed to look up cpu_ctx");
+		return;
+	}
+
+	/*
+	 * Use the running avg of weights to select the target cpuperf level.
+	 * This is a demonstration of the cpuperf feature rather than a
+	 * practical strategy to regulate CPU frequency.
+	 */
+	cpuc->avg_weight = cpuc->avg_weight * 3 / 4 + p->scx.weight / 4;
+	idx = weight_to_idx(cpuc->avg_weight);
+	cpuc->cpuperf_target = qidx_to_cpuperf_target[idx];
+
+	scx_bpf_cpuperf_set(scx_bpf_task_cpu(p), cpuc->cpuperf_target);
+}
+
 /*
  * The distance from the head of the queue scaled by the weight of the queue.
  * The lower the number, the older the task and the higher the priority.
@@ -491,6 +530,70 @@ struct {
 } central_timer SEC(".maps");
 
 /*
+ * Print out the min, avg and max performance levels of CPUs every second to
+ * demonstrate the cpuperf interface.
+ */
+static void monitor_cpuperf(void)
+{
+	u32 zero = 0, nr_cpu_ids;
+	u64 cap_sum = 0, cur_sum = 0, cur_min = SCX_CPUPERF_ONE, cur_max = 0;
+	u64 target_sum = 0, target_min = SCX_CPUPERF_ONE, target_max = 0;
+	const struct cpumask *online;
+	int i, nr_online_cpus = 0;
+
+	if (!__COMPAT_HAS_CPUMASKS)
+		return;
+
+	nr_cpu_ids = scx_bpf_nr_cpu_ids();
+	online = scx_bpf_get_online_cpumask();
+
+	bpf_for(i, 0, nr_cpu_ids) {
+		struct cpu_ctx *cpuc;
+		u32 cap, cur;
+
+		if (!bpf_cpumask_test_cpu(i, online))
+			continue;
+		nr_online_cpus++;
+
+		/* collect the capacity and current cpuperf */
+		cap = scx_bpf_cpuperf_cap(i);
+		cur = scx_bpf_cpuperf_cur(i);
+
+		cur_min = cur < cur_min ? cur : cur_min;
+		cur_max = cur > cur_max ? cur : cur_max;
+
+		/*
+		 * $cur is relative to $cap. Scale it down accordingly so that
+		 * it's in the same scale as other CPUs and $cur_sum/$cap_sum
+		 * makes sense.
+		 */
+		cur_sum += cur * cap / SCX_CPUPERF_ONE;
+		cap_sum += cap;
+
+		if (!(cpuc = bpf_map_lookup_percpu_elem(&cpu_ctx_stor, &zero, i))) {
+			scx_bpf_error("failed to look up cpu_ctx");
+			goto out;
+		}
+
+		/* collect target */
+		cur = cpuc->cpuperf_target;
+		target_sum += cur;
+		target_min = cur < target_min ? cur : target_min;
+		target_max = cur > target_max ? cur : target_max;
+	}
+
+	cpuperf_min = cur_min;
+	cpuperf_avg = cur_sum * SCX_CPUPERF_ONE / cap_sum;
+	cpuperf_max = cur_max;
+
+	cpuperf_target_min = target_min;
+	cpuperf_target_avg = target_sum / nr_online_cpus;
+	cpuperf_target_max = target_max;
+out:
+	scx_bpf_put_cpumask(online);
+}
+
+/*
  * Dump the currently queued tasks in the shared DSQ to demonstrate the usage of
  * scx_bpf_dsq_nr_queued() and DSQ iterator. Raise the dispatch batch count to
  * see meaningful dumps in the trace pipe.
@@ -513,6 +616,8 @@ static void dump_shared_dsq(void)
 
 static int monitor_timerfn(void *map, int *key, struct bpf_timer *timer)
 {
+	monitor_cpuperf();
+
 	if (print_shared_dsq)
 		dump_shared_dsq();
 
@@ -555,6 +660,7 @@ SCX_OPS_DEFINE(qmap_ops,
 	       .enqueue			= (void *)qmap_enqueue,
 	       .dequeue			= (void *)qmap_dequeue,
 	       .dispatch		= (void *)qmap_dispatch,
+	       .tick			= (void *)qmap_tick,
 	       .core_sched_before	= (void *)qmap_core_sched_before,
 	       .cpu_release		= (void *)qmap_cpu_release,
 	       .init_task		= (void *)qmap_init_task,

@@ -46,9 +46,8 @@ void init_sched_ext_class(void);
 
 static inline u32 scx_cpuperf_target(s32 cpu)
 {
-	/* for now, peg cpus at max performance while enabled */
 	if (scx_enabled())
-		return SCHED_CAPACITY_SCALE;
+		return cpu_rq(cpu)->scx.cpuperf_target;
 	else
 		return 0;
 }
