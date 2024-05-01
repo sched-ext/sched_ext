@@ -7,6 +7,22 @@
 #ifndef __SCX_COMPAT_BPF_H
 #define __SCX_COMPAT_BPF_H
 
+#define __COMPAT_ENUM_OR_ZERO(__type, __ent)					\
+({										\
+	__type __ret = 0;							\
+	if (bpf_core_enum_value_exists(__type, __ent))				\
+		__ret = __ent;							\
+	__ret;									\
+})
+
+/*
+ * %SCX_KICK_IDLE is a later addition. To support both before and after, use
+ * %__COMPAT_SCX_KICK_IDLE which becomes 0 on kernels which don't support it.
+ * Users can use %SCX_KICK_IDLE directly in the future.
+ */
+#define __COMPAT_SCX_KICK_IDLE							\
+	__COMPAT_ENUM_OR_ZERO(enum scx_kick_flags, SCX_KICK_IDLE)
+
 /*
  * scx_switch_all() was replaced by %SCX_OPS_SWITCH_PARTIAL. See
  * %__COMPAT_SCX_OPS_SWITCH_PARTIAL in compat.h. This can be dropped in the
