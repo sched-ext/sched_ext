@@ -692,6 +692,9 @@ enum scx_enq_flags {
 	SCX_ENQ_WAKEUP		= ENQUEUE_WAKEUP,
 	SCX_ENQ_HEAD		= ENQUEUE_HEAD,
 
+	/* expose SCHED_CPUFREQ_IOWAIT flag as enum */
+	SCX_ENQ_FREQ_IOWAIT	= SCHED_CPUFREQ_IOWAIT,
+
 	/* high 32bits are SCX specific */
 
 	/*
@@ -1949,6 +1952,8 @@ static void enqueue_task_scx(struct rq *rq, struct task_struct *p, int enq_flags
 	rq->scx.nr_running++;
 	add_nr_running(rq, 1);
 
+	if (p->in_iowait)
+		enq_flags &= SCX_ENQ_FREQ_IOWAIT;
 	if (SCX_HAS_OP(runnable))
 		SCX_CALL_OP_TASK(SCX_KF_REST, runnable, p, enq_flags);
 
