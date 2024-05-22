@@ -1333,14 +1333,16 @@ static struct task_struct *scx_task_iter_next(struct scx_task_iter *iter)
 }
 
 /**
- * scx_task_iter_next_filtered_locked - Next alive non-idle task with its rq locked
+ * scx_task_iter_next_locked - Next non-idle task with its rq locked
  * @iter: iterator to walk
+ * @include_dead: Whether we should include dead tasks in the iteration
  *
- * Visit the next alive non-idle task with its rq lock held. See
- * scx_task_iter_init() for details.
+ * Visit the non-idle task with its rq lock held. Allows callers to specify
+ * whether they would like to filter out dead tasks. See scx_task_iter_init()
+ * for details.
  */
 static struct task_struct *
-scx_task_iter_next_filtered_locked(struct scx_task_iter *iter)
+scx_task_iter_next_locked(struct scx_task_iter *iter, bool include_dead)
 {
 	struct task_struct *p;
 retry:
@@ -1367,7 +1369,7 @@ retry:
 	 * the final __schedle() while we're locking its rq and thus will stay
 	 * alive until the rq is unlocked.
 	 */
-	if (READ_ONCE(p->__state) == TASK_DEAD)
+	if (!include_dead && READ_ONCE(p->__state) == TASK_DEAD)
 		goto retry;
 
 	return p;
@@ -4393,19 +4395,31 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 
 	spin_lock_irq(&scx_tasks_lock);
 	scx_task_iter_init(&sti);
-	while ((p = scx_task_iter_next_filtered_locked(&sti))) {
+	/*
+	 * Invoke scx_ops_exit_task() on all non-idle tasks, including
+	 * TASK_DEAD tasks. Because dead tasks may have a nonzero refcount,
+	 * we may not have invoked sched_ext_free() on them by the time a
+	 * scheduler is disabled. We must therefore exit the task here, or we'd
+	 * fail to invoke ops.exit_task(), as the scheduler will have been
+	 * unloaded by the time the task is subsequently exited on the
+	 * sched_ext_free() path.
+	 */
+	while ((p = scx_task_iter_next_locked(&sti, true))) {
 		const struct sched_class *old_class = p->sched_class;
 		struct sched_enq_and_set_ctx ctx;
 
-		sched_deq_and_put_task(p, DEQUEUE_SAVE | DEQUEUE_MOVE, &ctx);
+		if (READ_ONCE(p->__state) != TASK_DEAD) {
+			sched_deq_and_put_task(p, DEQUEUE_SAVE | DEQUEUE_MOVE,
+					       &ctx);
 
-		p->scx.slice = min_t(u64, p->scx.slice, SCX_SLICE_DFL);
-		__setscheduler_prio(p, p->prio);
-		check_class_changing(task_rq(p), p, old_class);
+			p->scx.slice = min_t(u64, p->scx.slice, SCX_SLICE_DFL);
+			__setscheduler_prio(p, p->prio);
+			check_class_changing(task_rq(p), p, old_class);
 
-		sched_enq_and_set_task(&ctx);
+			sched_enq_and_set_task(&ctx);
 
-		check_class_changed(task_rq(p), p, old_class, p->prio);
+			check_class_changed(task_rq(p), p, old_class, p->prio);
+		}
 		scx_ops_exit_task(p);
 	}
 	scx_task_iter_exit(&sti);
@@ -5034,7 +5048,7 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 	spin_lock_irq(&scx_tasks_lock);
 
 	scx_task_iter_init(&sti);
-	while ((p = scx_task_iter_next_filtered_locked(&sti))) {
+	while ((p = scx_task_iter_next_locked(&sti, false))) {
 		get_task_struct(p);
 		scx_task_iter_rq_unlock(&sti);
 		spin_unlock_irq(&scx_tasks_lock);
@@ -5088,7 +5102,7 @@ static int scx_ops_enable(struct sched_ext_ops *ops)
 	WRITE_ONCE(scx_switching_all, !(ops->flags & SCX_OPS_SWITCH_PARTIAL));
 
 	scx_task_iter_init(&sti);
-	while ((p = scx_task_iter_next_filtered_locked(&sti))) {
+	while ((p = scx_task_iter_next_locked(&sti, false))) {
 		const struct sched_class *old_class = p->sched_class;
 		struct sched_enq_and_set_ctx ctx;
 
