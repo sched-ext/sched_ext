@@ -161,6 +161,7 @@ endef
 all_test_bpfprogs := $(foreach prog,$(wildcard *.bpf.c),$(INCLUDE_DIR)/$(patsubst %.c,%.skel.h,$(prog)))
 
 auto-test-targets :=			\
+	create_dsq			\
 	enq_last_no_enq_fails		\
 	enq_select_cpu_fails		\
 	ddsp_bogus_dsq_fail		\
