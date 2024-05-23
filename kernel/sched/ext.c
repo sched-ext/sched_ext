@@ -1017,7 +1017,7 @@ static u32 higher_bits(u32 flags)
 static u32 highest_bit(u32 flags)
 {
 	int bit = fls(flags);
-	return bit ? 1 << (bit - 1) : 0;
+	return ((u64) 1 << bit) >> 1;
 }
 
 /*
