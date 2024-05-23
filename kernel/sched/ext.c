@@ -3841,7 +3841,7 @@ static inline void scx_cgroup_unlock(void) {}
  *   isn't tied to the CPU at that point. Preemption is implemented by resetting
  *   the victim task's slice to 0 and triggering reschedule on the target CPU.
  *
- * - migrate_task_rq: Unncessary as task to cpu mapping is transient.
+ * - migrate_task_rq: Unnecessary as task to cpu mapping is transient.
  *
  * - task_fork/dead: We need fork/dead notifications for all tasks regardless of
  *   their current sched_class. Call them directly from sched core instead.
