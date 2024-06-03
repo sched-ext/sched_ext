@@ -4884,7 +4884,7 @@ static int validate_ops(const struct sched_ext_ops *ops)
 	return 0;
 }
 
-static int scx_ops_enable(struct sched_ext_ops *ops)
+static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
 {
 	struct scx_task_iter sti;
 	struct task_struct *p;
@@ -5369,12 +5369,12 @@ static int bpf_scx_check_member(const struct btf_type *t,
 	return 0;
 }
 
-static int bpf_scx_reg(void *kdata)
+static int bpf_scx_reg(void *kdata, struct bpf_link *link)
 {
-	return scx_ops_enable(kdata);
+	return scx_ops_enable(kdata, link);
 }
 
-static void bpf_scx_unreg(void *kdata)
+static void bpf_scx_unreg(void *kdata, struct bpf_link *link)
 {
 	scx_ops_disable(SCX_EXIT_UNREG);
 	kthread_flush_work(&scx_ops_disable_work);
@@ -5393,7 +5393,7 @@ static int bpf_scx_init(struct btf *btf)
 	return 0;
 }
 
-static int bpf_scx_update(void *kdata, void *old_kdata)
+static int bpf_scx_update(void *kdata, void *old_kdata, struct bpf_link *link)
 {
 	/*
 	 * sched_ext does not support updating the actively-loaded BPF

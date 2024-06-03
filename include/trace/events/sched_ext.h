@@ -18,7 +18,7 @@ TRACE_EVENT(sched_ext_dump,
 	),
 
 	TP_fast_assign(
-		__assign_str(line, line);
+		__assign_str(line);
 	),
 
 	TP_printk("%s",

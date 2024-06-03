@@ -11,13 +11,13 @@
 
 #ifdef CONFIG_SCHED_CLASS_EXT
 
-#include <linux/rhashtable.h>
 #include <linux/llist.h>
+#include <linux/rhashtable-types.h>
 
 enum scx_public_consts {
 	SCX_OPS_NAME_LEN	= 128,
 
-	SCX_SLICE_DFL		= 20 * NSEC_PER_MSEC,
+	SCX_SLICE_DFL		= 20 * 1000000,	/* 20ms */
 	SCX_SLICE_INF		= U64_MAX,	/* infinite, implies nohz */
 };
 
