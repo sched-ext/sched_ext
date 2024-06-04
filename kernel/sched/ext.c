@@ -3218,20 +3218,16 @@ static void handle_hotplug(struct rq *rq, bool online)
 			     online ? "online" : "offline");
 }
 
-static void rq_online_scx(struct rq *rq, enum rq_onoff_reason reason)
+static void rq_online_scx(struct rq *rq)
 {
-	if (reason == RQ_ONOFF_HOTPLUG) {
-		handle_hotplug(rq, true);
-		rq->scx.flags |= SCX_RQ_ONLINE;
-	}
+	handle_hotplug(rq, true);
+	rq->scx.flags |= SCX_RQ_ONLINE;
 }
 
-static void rq_offline_scx(struct rq *rq, enum rq_onoff_reason reason)
+static void rq_offline_scx(struct rq *rq)
 {
-	if (reason == RQ_ONOFF_HOTPLUG) {
-		rq->scx.flags &= ~SCX_RQ_ONLINE;
-		handle_hotplug(rq, false);
-	}
+	rq->scx.flags &= ~SCX_RQ_ONLINE;
+	handle_hotplug(rq, false);
 }
 
 #else	/* CONFIG_SMP */

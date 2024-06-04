@@ -9670,7 +9670,7 @@ static inline void balance_hotplug_wait(void)
 
 #endif /* CONFIG_HOTPLUG_CPU */
 
-void set_rq_online(struct rq *rq, enum rq_onoff_reason reason)
+void set_rq_online(struct rq *rq)
 {
 	if (!rq->online) {
 		const struct sched_class *class;
@@ -9680,12 +9680,12 @@ void set_rq_online(struct rq *rq, enum rq_onoff_reason reason)
 
 		for_each_class(class) {
 			if (class->rq_online)
-				class->rq_online(rq, reason);
+				class->rq_online(rq);
 		}
 	}
 }
 
-void set_rq_offline(struct rq *rq, enum rq_onoff_reason reason)
+void set_rq_offline(struct rq *rq)
 {
 	if (rq->online) {
 		const struct sched_class *class;
@@ -9693,7 +9693,7 @@ void set_rq_offline(struct rq *rq, enum rq_onoff_reason reason)
 		update_rq_clock(rq);
 		for_each_class(class) {
 			if (class->rq_offline)
-				class->rq_offline(rq, reason);
+				class->rq_offline(rq);
 		}
 
 		cpumask_clear_cpu(rq->cpu, rq->rd->online);
@@ -9789,7 +9789,7 @@ int sched_cpu_activate(unsigned int cpu)
 	rq_lock_irqsave(rq, &rf);
 	if (rq->rd) {
 		BUG_ON(!cpumask_test_cpu(cpu, rq->rd->span));
-		set_rq_online(rq, RQ_ONOFF_HOTPLUG);
+		set_rq_online(rq);
 	}
 	rq_unlock_irqrestore(rq, &rf);
 
@@ -9833,7 +9833,7 @@ int sched_cpu_deactivate(unsigned int cpu)
 	rq_lock_irqsave(rq, &rf);
 	if (rq->rd) {
 		BUG_ON(!cpumask_test_cpu(cpu, rq->rd->span));
-		set_rq_offline(rq, RQ_ONOFF_HOTPLUG);
+		set_rq_offline(rq);
 	}
 	rq_unlock_irqrestore(rq, &rf);
 
