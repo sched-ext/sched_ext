@@ -166,6 +166,7 @@ auto-test-targets :=			\
 	enq_select_cpu_fails		\
 	ddsp_bogus_dsq_fail		\
 	ddsp_vtimelocal_fail		\
+	dsp_local_on			\
 	exit				\
 	hotplug				\
 	init_enable_count		\
