@@ -2402,7 +2402,7 @@ dispatch_to_local_dsq(struct rq *rq, struct rq_flags *rf, u64 dsq_id,
 		}
 
 		/* if the destination CPU is idle, wake it up */
-		if (dsp && p->sched_class > dst_rq->curr->sched_class)
+		if (dsp && p->sched_class < dst_rq->curr->sched_class)
 			resched_curr(dst_rq);
 
 		dispatch_to_local_dsq_unlock(rq, rf, src_rq, locked_dst_rq);
