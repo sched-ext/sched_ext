@@ -19,6 +19,12 @@ void BPF_STRUCT_OPS(hotplug_exit, struct scx_exit_info *ei)
 
 static void exit_from_hotplug(s32 cpu, bool onlining)
 {
+	/*
+	 * Ignored, just used to verify that we can invoke blocking kfuncs
+	 * from the hotplug path.
+	 */
+	scx_bpf_create_dsq(0, -1);
+
 	s64 code = SCX_ECODE_ACT_RESTART | HOTPLUG_EXIT_RSN;
 
 	if (onlining)
@@ -28,12 +34,12 @@ static void exit_from_hotplug(s32 cpu, bool onlining)
 		     onlining ? "online" : "offline");
 }
 
-void BPF_STRUCT_OPS(hotplug_cpu_online, s32 cpu)
+void BPF_STRUCT_OPS_SLEEPABLE(hotplug_cpu_online, s32 cpu)
 {
 	exit_from_hotplug(cpu, true);
 }
 
-void BPF_STRUCT_OPS(hotplug_cpu_offline, s32 cpu)
+void BPF_STRUCT_OPS_SLEEPABLE(hotplug_cpu_offline, s32 cpu)
 {
 	exit_from_hotplug(cpu, false);
 }
