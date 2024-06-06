@@ -12511,14 +12511,14 @@ void sched_balance_trigger(struct rq *rq)
 	nohz_balancer_kick(rq);
 }
 
-static void rq_online_fair(struct rq *rq, enum rq_onoff_reason reason)
+static void rq_online_fair(struct rq *rq)
 {
 	update_sysctl();
 
 	update_runtime_enabled(rq);
 }
 
-static void rq_offline_fair(struct rq *rq, enum rq_onoff_reason reason)
+static void rq_offline_fair(struct rq *rq)
 {
 	update_sysctl();
 

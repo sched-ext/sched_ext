@@ -3209,29 +3209,33 @@ static void handle_hotplug(struct rq *rq, bool online)
 	atomic_long_inc(&scx_hotplug_seq);
 
 	if (online && SCX_HAS_OP(cpu_online))
-		SCX_CALL_OP(SCX_KF_REST, cpu_online, cpu);
+		SCX_CALL_OP(SCX_KF_SLEEPABLE, cpu_online, cpu);
 	else if (!online && SCX_HAS_OP(cpu_offline))
-		SCX_CALL_OP(SCX_KF_REST, cpu_offline, cpu);
+		SCX_CALL_OP(SCX_KF_SLEEPABLE, cpu_offline, cpu);
 	else
 		scx_ops_exit(SCX_ECODE_ACT_RESTART | SCX_ECODE_RSN_HOTPLUG,
 			     "cpu %d going %s, exiting scheduler", cpu,
 			     online ? "online" : "offline");
 }
 
-static void rq_online_scx(struct rq *rq, enum rq_onoff_reason reason)
+static void rq_online_scx(struct rq *rq)
 {
-	if (reason == RQ_ONOFF_HOTPLUG) {
-		handle_hotplug(rq, true);
-		rq->scx.flags |= SCX_RQ_ONLINE;
-	}
+	rq->scx.flags |= SCX_RQ_ONLINE;
 }
 
-static void rq_offline_scx(struct rq *rq, enum rq_onoff_reason reason)
+static void rq_offline_scx(struct rq *rq)
 {
-	if (reason == RQ_ONOFF_HOTPLUG) {
-		rq->scx.flags &= ~SCX_RQ_ONLINE;
-		handle_hotplug(rq, false);
-	}
+	rq->scx.flags &= ~SCX_RQ_ONLINE;
+}
+
+void scx_rq_activate(struct rq *rq)
+{
+	handle_hotplug(rq, true);
+}
+
+void scx_rq_deactivate(struct rq *rq)
+{
+	handle_hotplug(rq, false);
 }
 
 #else	/* CONFIG_SMP */
@@ -5358,6 +5362,8 @@ static int bpf_scx_check_member(const struct btf_type *t,
 	case offsetof(struct sched_ext_ops, cgroup_exit):
 	case offsetof(struct sched_ext_ops, cgroup_prep_move):
 #endif
+	case offsetof(struct sched_ext_ops, cpu_online):
+	case offsetof(struct sched_ext_ops, cpu_offline):
 	case offsetof(struct sched_ext_ops, init):
 	case offsetof(struct sched_ext_ops, exit):
 		break;
