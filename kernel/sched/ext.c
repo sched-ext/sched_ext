@@ -3107,8 +3107,10 @@ static int select_task_rq_scx(struct task_struct *p, int prev_cpu, int wake_flag
 	 * which can decide to preempt self to force it through the regular
 	 * scheduling path.
 	 */
-	if (unlikely(wake_flags & WF_EXEC))
-		return prev_cpu;
+	if (unlikely(wake_flags & WF_EXEC)) {
+		int idle_cpu = scx_pick_idle_cpu(p->cpus_ptr, SCX_PICK_IDLE_CORE);
+		return idle_cpu;
+	}
 
 	if (SCX_HAS_OP(select_cpu)) {
 		s32 cpu;
