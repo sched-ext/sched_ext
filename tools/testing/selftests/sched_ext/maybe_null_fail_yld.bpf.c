@@ -12,14 +12,17 @@ u64 vtime_test;
 void BPF_STRUCT_OPS(maybe_null_running, struct task_struct *p)
 {}
 
-void BPF_STRUCT_OPS(maybe_null_fail_dispatch, s32 cpu, struct task_struct *p)
+bool BPF_STRUCT_OPS(maybe_null_fail_yield, struct task_struct *from,
+		    struct task_struct *to)
 {
-	vtime_test = p->scx.dsq_vtime;
+	bpf_printk("Yielding to %s[%d]", to->comm, to->pid);
+
+	return false;
 }
 
 SEC(".struct_ops.link")
 struct sched_ext_ops maybe_null_fail = {
-	.dispatch               = maybe_null_fail_dispatch,
+	.yield			= maybe_null_fail_yield,
 	.enable			= maybe_null_running,
-	.name			= "maybe_null_fail_dispatch",
+	.name			= "maybe_null_fail_yield",
 };
