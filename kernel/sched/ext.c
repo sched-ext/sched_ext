@@ -5183,11 +5183,11 @@ extern struct btf *btf_vmlinux;
 static const struct btf_type *task_struct_type;
 static u32 task_struct_type_id;
 
-/* Make the 2nd argument of .dispatch a pointer that can be NULL. */
-static bool promote_dispatch_2nd_arg(int off, int size,
-				     enum bpf_access_type type,
-				     const struct bpf_prog *prog,
-				     struct bpf_insn_access_aux *info)
+static bool promote_op_nth_arg(int arg_n, const char *op,
+			       int off, int size,
+			       enum bpf_access_type type,
+			       const struct bpf_prog *prog,
+			       struct bpf_insn_access_aux *info)
 {
 	struct btf *btf = bpf_get_btf_vmlinux();
 	const struct bpf_struct_ops_desc *st_ops_desc;
@@ -5195,6 +5195,10 @@ static bool promote_dispatch_2nd_arg(int off, int size,
 	const struct btf_type *t;
 	u32 btf_id, member_idx;
 	const char *mname;
+
+	/* struct_ops op args are all sequential, 64-bit numbers */
+	if (off != arg_n * sizeof(__u64))
+		return false;
 
 	/* btf_id should be the type id of struct sched_ext_ops */
 	btf_id = prog->aux->attach_btf_id;
@@ -5217,14 +5221,7 @@ static bool promote_dispatch_2nd_arg(int off, int size,
 	member = &btf_type_member(t)[member_idx];
 	mname = btf_name_by_offset(btf_vmlinux, member->name_off);
 
-	/*
-	 * Check if it is the second argument of the function pointer at
-	 * "dispatch" in struct sched_ext_ops. The arguments of struct_ops
-	 * operators are sequential and 64-bit, so the second argument is at
-	 * offset sizeof(__u64).
-	 */
-	if (strcmp(mname, "dispatch") == 0 &&
-	    off == sizeof(__u64)) {
+	if (!strcmp(mname, op)) {
 		/*
 		 * The value is a pointer to a type (struct task_struct) given
 		 * by a BTF ID (PTR_TO_BTF_ID). It is trusted (PTR_TRUSTED),
@@ -5245,6 +5242,15 @@ static bool promote_dispatch_2nd_arg(int off, int size,
 	return false;
 }
 
+static bool promote_op_arg(int off, int size,
+			   enum bpf_access_type type,
+			   const struct bpf_prog *prog,
+			   struct bpf_insn_access_aux *info)
+{
+	return promote_op_nth_arg(1, "dispatch", off, size, type, prog, info) ||
+	       promote_op_nth_arg(1, "yield", off, size, type, prog, info);
+}
+
 static bool bpf_scx_is_valid_access(int off, int size,
 				    enum bpf_access_type type,
 				    const struct bpf_prog *prog,
@@ -5252,7 +5258,7 @@ static bool bpf_scx_is_valid_access(int off, int size,
 {
 	if (type != BPF_READ)
 		return false;
-	if (promote_dispatch_2nd_arg(off, size, type, prog, info))
+	if (promote_op_arg(off, size, type, prog, info))
 		return true;
 	if (off < 0 || off >= sizeof(__u64) * MAX_BPF_FUNC_ARGS)
 		return false;
