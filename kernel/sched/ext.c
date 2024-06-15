@@ -1017,7 +1017,7 @@ static u32 higher_bits(u32 flags)
 static u32 highest_bit(u32 flags)
 {
 	int bit = fls(flags);
-	return ((u64) 1 << bit) >> 1;
+	return ((u64)1 << bit) >> 1;
 }
 
 /*
@@ -1820,8 +1820,8 @@ static void do_enqueue_task(struct rq *rq, struct task_struct *p, u64 enq_flags,
 		goto local_norefill;
 
 	/*
-	 * If !rq->online, we already told the BPF scheduler that the CPU is
-	 * offline. We're just trying to on/offline the CPU. Don't bother the
+	 * If !scx_rq_online(), we already told the BPF scheduler that the CPU
+	 * is offline and are just running the hotplug path. Don't bother the
 	 * BPF scheduler.
 	 */
 	if (!scx_rq_online(rq))
@@ -2402,7 +2402,8 @@ dispatch_to_local_dsq(struct rq *rq, struct rq_flags *rf, u64 dsq_id,
 		}
 
 		/* if the destination CPU is idle, wake it up */
-		if (dsp && p->sched_class < dst_rq->curr->sched_class)
+		if (dsp && sched_class_above(p->sched_class,
+					     dst_rq->curr->sched_class))
 			resched_curr(dst_rq);
 
 		dispatch_to_local_dsq_unlock(rq, rf, src_rq, locked_dst_rq);
@@ -3218,16 +3219,6 @@ static void handle_hotplug(struct rq *rq, bool online)
 			     online ? "online" : "offline");
 }
 
-static void rq_online_scx(struct rq *rq)
-{
-	rq->scx.flags |= SCX_RQ_ONLINE;
-}
-
-static void rq_offline_scx(struct rq *rq)
-{
-	rq->scx.flags &= ~SCX_RQ_ONLINE;
-}
-
 void scx_rq_activate(struct rq *rq)
 {
 	handle_hotplug(rq, true);
@@ -3236,6 +3227,16 @@ void scx_rq_activate(struct rq *rq)
 void scx_rq_deactivate(struct rq *rq)
 {
 	handle_hotplug(rq, false);
+}
+
+static void rq_online_scx(struct rq *rq)
+{
+	rq->scx.flags |= SCX_RQ_ONLINE;
+}
+
+static void rq_offline_scx(struct rq *rq)
+{
+	rq->scx.flags &= ~SCX_RQ_ONLINE;
 }
 
 #else	/* CONFIG_SMP */
@@ -5183,8 +5184,7 @@ extern struct btf *btf_vmlinux;
 static const struct btf_type *task_struct_type;
 static u32 task_struct_type_id;
 
-static bool promote_op_nth_arg(int arg_n, const char *op,
-			       int off, int size,
+static bool set_arg_maybe_null(const char *op, int arg_n, int off, int size,
 			       enum bpf_access_type type,
 			       const struct bpf_prog *prog,
 			       struct bpf_insn_access_aux *info)
@@ -5242,15 +5242,6 @@ static bool promote_op_nth_arg(int arg_n, const char *op,
 	return false;
 }
 
-static bool promote_op_arg(int off, int size,
-			   enum bpf_access_type type,
-			   const struct bpf_prog *prog,
-			   struct bpf_insn_access_aux *info)
-{
-	return promote_op_nth_arg(1, "dispatch", off, size, type, prog, info) ||
-	       promote_op_nth_arg(1, "yield", off, size, type, prog, info);
-}
-
 static bool bpf_scx_is_valid_access(int off, int size,
 				    enum bpf_access_type type,
 				    const struct bpf_prog *prog,
@@ -5258,7 +5249,8 @@ static bool bpf_scx_is_valid_access(int off, int size,
 {
 	if (type != BPF_READ)
 		return false;
-	if (promote_op_arg(off, size, type, prog, info))
+	if (set_arg_maybe_null("dispatch", 1, off, size, type, prog, info) ||
+	    set_arg_maybe_null("yield", 1, off, size, type, prog, info))
 		return true;
 	if (off < 0 || off >= sizeof(__u64) * MAX_BPF_FUNC_ARGS)
 		return false;
