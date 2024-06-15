@@ -235,49 +235,14 @@ BPF_PROG(name, ##args)
 	__addr;									\
 })
 
+
 /*
- * BPF core and other generic helpers
+ * BPF declarations and helpers
  */
 
 /* list and rbtree */
 #define __contains(name, node) __attribute__((btf_decl_tag("contains:" #name ":" #node)))
 #define private(name) SEC(".data." #name) __hidden __attribute__((aligned(8)))
-
-/*
- * bpf_log2 - Compute the base 2 logarithm of a 32-bit exponential value.
- * @v: The value for which we're computing the base 2 logarithm.
- */
-static inline u32 bpf_log2(u32 v)
-{
-        u32 r;
-        u32 shift;
-
-        r = (v > 0xFFFF) << 4; v >>= r;
-        shift = (v > 0xFF) << 3; v >>= shift; r |= shift;
-        shift = (v > 0xF) << 2; v >>= shift; r |= shift;
-        shift = (v > 0x3) << 1; v >>= shift; r |= shift;
-        r |= (v >> 1);
-        return r;
-}
-
-/*
- * bpf_log2l - Compute the base 2 logarithm of a 64-bit exponential value.
- * @v: The value for which we're computing the base 2 logarithm.
- */
-static inline u32 bpf_log2l(u64 v)
-{
-        u32 hi = v >> 32;
-        if (hi)
-                return bpf_log2(hi) + 32 + 1;
-        else
-                return bpf_log2(v) + 1;
-}
-
-/* useful compiler attributes */
-#define likely(x) __builtin_expect(!!(x), 1)
-#define unlikely(x) __builtin_expect(!!(x), 0)
-#define __maybe_unused __attribute__((__unused__))
-
 
 void *bpf_obj_new_impl(__u64 local_type_id, void *meta) __ksym;
 void bpf_obj_drop_impl(void *kptr, void *meta) __ksym;
@@ -311,6 +276,16 @@ struct cgroup *bpf_cgroup_ancestor(struct cgroup *cgrp, int level) __ksym;
 void bpf_cgroup_release(struct cgroup *cgrp) __ksym;
 struct cgroup *bpf_cgroup_from_id(u64 cgid) __ksym;
 
+/* css iteration */
+struct bpf_iter_css;
+struct cgroup_subsys_state;
+extern int bpf_iter_css_new(struct bpf_iter_css *it,
+			    struct cgroup_subsys_state *start,
+			    unsigned int flags) __weak __ksym;
+extern struct cgroup_subsys_state *
+bpf_iter_css_next(struct bpf_iter_css *it) __weak __ksym;
+extern void bpf_iter_css_destroy(struct bpf_iter_css *it) __weak __ksym;
+
 /* cpumask */
 struct bpf_cpumask *bpf_cpumask_create(void) __ksym;
 struct bpf_cpumask *bpf_cpumask_acquire(struct bpf_cpumask *cpumask) __ksym;
@@ -343,6 +318,99 @@ u32 bpf_cpumask_any_and_distribute(const struct cpumask *src1,
 /* rcu */
 void bpf_rcu_read_lock(void) __ksym;
 void bpf_rcu_read_unlock(void) __ksym;
+
+
+/*
+ * Other helpers
+ */
+
+/* useful compiler attributes */
+#define likely(x) __builtin_expect(!!(x), 1)
+#define unlikely(x) __builtin_expect(!!(x), 0)
+#define __maybe_unused __attribute__((__unused__))
+
+/*
+ * READ/WRITE_ONCE() are from kernel (include/asm-generic/rwonce.h). They
+ * prevent compiler from caching, redoing or reordering reads or writes.
+ */
+typedef __u8  __attribute__((__may_alias__))  __u8_alias_t;
+typedef __u16 __attribute__((__may_alias__)) __u16_alias_t;
+typedef __u32 __attribute__((__may_alias__)) __u32_alias_t;
+typedef __u64 __attribute__((__may_alias__)) __u64_alias_t;
+
+static __always_inline void __read_once_size(const volatile void *p, void *res, int size)
+{
+	switch (size) {
+	case 1: *(__u8_alias_t  *) res = *(volatile __u8_alias_t  *) p; break;
+	case 2: *(__u16_alias_t *) res = *(volatile __u16_alias_t *) p; break;
+	case 4: *(__u32_alias_t *) res = *(volatile __u32_alias_t *) p; break;
+	case 8: *(__u64_alias_t *) res = *(volatile __u64_alias_t *) p; break;
+	default:
+		barrier();
+		__builtin_memcpy((void *)res, (const void *)p, size);
+		barrier();
+	}
+}
+
+static __always_inline void __write_once_size(volatile void *p, void *res, int size)
+{
+	switch (size) {
+	case 1: *(volatile  __u8_alias_t *) p = *(__u8_alias_t  *) res; break;
+	case 2: *(volatile __u16_alias_t *) p = *(__u16_alias_t *) res; break;
+	case 4: *(volatile __u32_alias_t *) p = *(__u32_alias_t *) res; break;
+	case 8: *(volatile __u64_alias_t *) p = *(__u64_alias_t *) res; break;
+	default:
+		barrier();
+		__builtin_memcpy((void *)p, (const void *)res, size);
+		barrier();
+	}
+}
+
+#define READ_ONCE(x)					\
+({							\
+	union { typeof(x) __val; char __c[1]; } __u =	\
+		{ .__c = { 0 } };			\
+	__read_once_size(&(x), __u.__c, sizeof(x));	\
+	__u.__val;					\
+})
+
+#define WRITE_ONCE(x, val)				\
+({							\
+	union { typeof(x) __val; char __c[1]; } __u =	\
+		{ .__val = (val) }; 			\
+	__write_once_size(&(x), __u.__c, sizeof(x));	\
+	__u.__val;					\
+})
+
+/*
+ * log2_u32 - Compute the base 2 logarithm of a 32-bit exponential value.
+ * @v: The value for which we're computing the base 2 logarithm.
+ */
+static inline u32 log2_u32(u32 v)
+{
+        u32 r;
+        u32 shift;
+
+        r = (v > 0xFFFF) << 4; v >>= r;
+        shift = (v > 0xFF) << 3; v >>= shift; r |= shift;
+        shift = (v > 0xF) << 2; v >>= shift; r |= shift;
+        shift = (v > 0x3) << 1; v >>= shift; r |= shift;
+        r |= (v >> 1);
+        return r;
+}
+
+/*
+ * log2_u64 - Compute the base 2 logarithm of a 64-bit exponential value.
+ * @v: The value for which we're computing the base 2 logarithm.
+ */
+static inline u32 log2_u64(u64 v)
+{
+        u32 hi = v >> 32;
+        if (hi)
+                return log2_u32(hi) + 32 + 1;
+        else
+                return log2_u32(v) + 1;
+}
 
 #include "compat.bpf.h"
 
