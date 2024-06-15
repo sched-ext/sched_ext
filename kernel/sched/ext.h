@@ -41,12 +41,12 @@ void scx_pre_fork(struct task_struct *p);
 int scx_fork(struct task_struct *p);
 void scx_post_fork(struct task_struct *p);
 void scx_cancel_fork(struct task_struct *p);
-int scx_check_setscheduler(struct task_struct *p, int policy);
 bool scx_can_stop_tick(struct rq *rq);
-bool task_should_scx(struct task_struct *p);
-void init_sched_ext_class(void);
 void scx_rq_activate(struct rq *rq);
 void scx_rq_deactivate(struct rq *rq);
+int scx_check_setscheduler(struct task_struct *p, int policy);
+bool task_should_scx(struct task_struct *p);
+void init_sched_ext_class(void);
 
 static inline u32 scx_cpuperf_target(s32 cpu)
 {
@@ -97,13 +97,13 @@ static inline void scx_pre_fork(struct task_struct *p) {}
 static inline int scx_fork(struct task_struct *p) { return 0; }
 static inline void scx_post_fork(struct task_struct *p) {}
 static inline void scx_cancel_fork(struct task_struct *p) {}
-static inline int scx_check_setscheduler(struct task_struct *p, int policy) { return 0; }
-static inline bool scx_can_stop_tick(struct rq *rq) { return true; }
-static inline bool task_on_scx(const struct task_struct *p) { return false; }
-static inline void init_sched_ext_class(void) {}
 static inline u32 scx_cpuperf_target(s32 cpu) { return 0; }
+static inline bool scx_can_stop_tick(struct rq *rq) { return true; }
 static inline void scx_rq_activate(struct rq *rq) {}
 static inline void scx_rq_deactivate(struct rq *rq) {}
+static inline int scx_check_setscheduler(struct task_struct *p, int policy) { return 0; }
+static inline bool task_on_scx(const struct task_struct *p) { return false; }
+static inline void init_sched_ext_class(void) {}
 
 #define for_each_active_class		for_each_class
 #define for_balance_class_range		for_class_range
