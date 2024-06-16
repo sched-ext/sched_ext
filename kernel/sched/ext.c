@@ -2137,7 +2137,7 @@ static bool move_task_to_local_dsq(struct rq *rq, struct task_struct *p,
 }
 
 /**
- * dispatch_to_local_dsq_lock - Ensure source and desitnation rq's are locked
+ * dispatch_to_local_dsq_lock - Ensure source and destination rq's are locked
  * @rq: current rq which is locked
  * @rf: rq_flags to use when unlocking @rq
  * @src_rq: rq to move task from
