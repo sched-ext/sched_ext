@@ -6092,13 +6092,13 @@ __bpf_kfunc bool __scx_bpf_consume_task(unsigned long it, struct task_struct *p)
 	 */
 	dsq = READ_ONCE(p->scx.dsq);
 
+	if (unlikely(!dsq || dsq != kit_dsq))
+		return false;
+
 	if (unlikely(dsq->id == SCX_DSQ_LOCAL)) {
 		scx_ops_error("local DSQ not allowed");
 		return false;
 	}
-
-	if (unlikely(!dsq || dsq != kit_dsq))
-		return false;
 
 	if (!scx_kf_allowed(SCX_KF_DISPATCH))
 		return false;
