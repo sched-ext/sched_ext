@@ -24,7 +24,7 @@ open_load_prog(bool global)
 	SCX_BUG_ON(!skel, "Failed to open skel");
 
 	if (!global)
-		skel->struct_ops.init_enable_count_ops->flags |= __COMPAT_SCX_OPS_SWITCH_PARTIAL;
+		skel->struct_ops.init_enable_count_ops->flags |= SCX_OPS_SWITCH_PARTIAL;
 
 	SCX_BUG_ON(init_enable_count__load(skel), "Failed to load skel");
 
