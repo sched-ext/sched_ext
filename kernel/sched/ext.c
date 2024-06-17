@@ -669,6 +669,22 @@ struct sched_ext_ops {
 	 * BPF scheduler is enabled.
 	 */
 	char name[SCX_OPS_NAME_LEN];
+
+	/**
+	 * maintainer - Maintainer of the BPF scheduler
+	 *
+	 * If the BPF scheduler encounters an error the maintainer will be
+	 * included in the error message as the support contact.
+	 */
+	char maintainer[SCX_MAINTAINER_LEN];
+
+	/**
+	 * maintainer_url - URL for scheduler related issues
+	 *
+	 * URL of the maintainer for support of the BPF scheduler. The support
+	 * URL be included in error messages with the maintainer.
+	 */
+	char maintainer_url[SCX_MAINTAINER_URL_LEN];
 };
 
 enum scx_opi {
@@ -4453,6 +4469,14 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 			printk(KERN_ERR "sched_ext: %s\n", ei->reason);
 		else
 			printk(KERN_ERR "sched_ext: %s (%s)\n", ei->reason, ei->msg);
+		if (!(scx_ops.maintainer[0] == '\n'))
+			printk(KERN_ERR
+				"sched_ext: BPF scheduler maintainer: %s\n",
+			       	scx_ops.maintainer);
+		if (!(scx_ops.maintainer_url[0] == '\0'))
+			printk(KERN_ERR
+				"sched_ext: BPF scheduler support url: %s\n",
+			       	scx_ops.maintainer_url);
 
 		stack_trace_print(ei->bt, ei->bt_len, 2);
 	}
